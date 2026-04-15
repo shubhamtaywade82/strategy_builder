@@ -34,6 +34,19 @@ RSpec.describe StrategyBuilder::StrategyGenerator do
       expect(out.first[:name]).to include('offline template')
       expect(out.first[:rationale]).to include('LLM was unavailable')
     end
+
+    it 'accepts string-keyed hashes from the LLM and returns symbol-keyed candidates' do
+      planner = instance_double(Ollama::Agent::Planner)
+      allow(StrategyBuilder::OllamaGeneratePlanner).to receive(:build).and_return(planner)
+      string_keys = JSON.parse(JSON.generate(TestData.strategy_candidate))
+      allow(planner).to receive(:run).and_return([string_keys])
+
+      generator = described_class.new(client: StrategyBuilder.ollama_client)
+      out = generator.generate(features: features, count: 1)
+
+      expect(out).not_to be_empty
+      expect(out.first[:name]).to eq(TestData.strategy_candidate[:name])
+    end
   end
 
   describe '#mutate' do
