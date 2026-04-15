@@ -21,10 +21,7 @@ module StrategyBuilder
 
       candidates = call_llm(prompt)
       if candidates.empty?
-        @logger.warn do
-          "LLM returned no candidates (Ollama down, timeout, or empty parse). " \
-            "Using built-in template fallback — check OLLAMA_BASE_URL, OLLAMA_TIMEOUT, and `ollama list`."
-        end
+        log_ollama_fallback(reason: "Ollama unreachable, stream dropped, invalid JSON, or empty parse")
         candidates = template_fallback_candidates(features: features, count: count)
       end
 
@@ -45,7 +42,7 @@ module StrategyBuilder
 
       candidates = call_llm(prompt)
       if candidates.empty?
-        @logger.warn { "LLM returned no candidates for mutate; using template fallback." }
+        log_ollama_fallback(reason: "mutate call failed same as generate")
         candidates = templates.map { |t| decorate_fallback_template(t, features) }
       end
 
@@ -75,6 +72,25 @@ module StrategyBuilder
     end
 
     private
+
+    def log_ollama_fallback(reason:)
+      cfg = StrategyBuilder.configuration
+      @logger.warn { "LLM returned no candidates (#{reason}). Using built-in template fallback." }
+      ollama_troubleshooting_lines(cfg).each { |line| @logger.warn { line } }
+    end
+
+    def ollama_troubleshooting_lines(cfg)
+      [
+        "Why EOF / connection reset: the HTTP connection to Ollama closed while reading the response body " \
+          "(server crash/OOM, proxy timeout, VPN, Wi-Fi, or WSL2-to-host networking); not a CoinDCX issue.",
+        "Config: OLLAMA_BASE_URL=#{cfg.ollama_base_url} | OLLAMA_AGENT_MODEL/OLLAMA_MODEL=#{cfg.ollama_model} | " \
+          "OLLAMA_TIMEOUT=#{cfg.ollama_timeout}s | OLLAMA_NUM_CTX=#{cfg.ollama_num_ctx}",
+        "Try: curl -sS #{cfg.ollama_base_url}/api/tags | head -c 300",
+        "WSL2 + Ollama on Windows: use 127.0.0.1 (default) or the Windows host IP from `ip route show default | awk '{print $3}'`.",
+        "Stability: run `ollama ps`, use a smaller/faster model, lower OLLAMA_NUM_CTX (e.g. 4096), " \
+          "raise OLLAMA_TIMEOUT for big thinking models, watch `ollama serve` logs for unload/OOM."
+      ]
+    end
 
     def transient_network_error?(error)
       error.is_a?(EOFError) ||

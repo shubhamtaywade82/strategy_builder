@@ -18,7 +18,7 @@ module StrategyBuilder
 
     attr_accessor :coindcx_api_key, :coindcx_api_secret,
                   :ollama_model, :ollama_temperature, :ollama_timeout,
-                  :ollama_base_url,
+                  :ollama_base_url, :ollama_num_ctx, :ollama_retries,
                   :ollama_llm_max_attempts, :ollama_llm_retry_base_seconds,
                   :default_instruments, :default_timeframes,
                   :backtest_fee_rate, :backtest_slippage_bps,
@@ -34,7 +34,10 @@ module StrategyBuilder
       @ollama_temperature = 0.3
       # Large prompts + thinking models often need >120s on CPU-bound hosts.
       @ollama_timeout = Integer(ENV.fetch("OLLAMA_TIMEOUT", "240"))
-      @ollama_base_url = ENV.fetch("OLLAMA_BASE_URL", "http://localhost:11434")
+      # WSL2 → Windows Ollama: prefer http://127.0.0.1:11434 over "localhost" if you see EOF / connection reset.
+      @ollama_base_url = ENV.fetch("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+      @ollama_num_ctx = Integer(ENV.fetch("OLLAMA_NUM_CTX", "8192"))
+      @ollama_retries = Integer(ENV.fetch("OLLAMA_CLIENT_RETRIES", "2"))
       @ollama_llm_max_attempts = Integer(ENV.fetch("STRATEGY_BUILDER_OLLAMA_LLM_ATTEMPTS", "5"))
       @ollama_llm_retry_base_seconds = Float(ENV.fetch("STRATEGY_BUILDER_OLLAMA_RETRY_BASE", "0.75"))
 

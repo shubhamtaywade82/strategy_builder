@@ -106,6 +106,8 @@ module StrategyBuilder
         config.model = configuration.ollama_model
         config.temperature = configuration.ollama_temperature
         config.timeout = configuration.ollama_timeout
+        config.num_ctx = configuration.ollama_num_ctx
+        config.retries = configuration.ollama_retries
         Ollama::Client.new(config: config)
       end
     end
