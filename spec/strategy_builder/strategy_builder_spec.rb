@@ -179,4 +179,36 @@ RSpec.describe StrategyBuilder do
       StrategyBuilder.warn_if_ollama_base_url_is_public_website
     end
   end
+
+  describe ".ollama_client" do
+    around do |example|
+      saved = ENV.fetch("OLLAMA_ALLOW_PUBLIC_WEBSITE", nil)
+      ENV.delete("OLLAMA_ALLOW_PUBLIC_WEBSITE")
+      StrategyBuilder.reset!
+      example.run
+      StrategyBuilder.reset!
+      saved ? ENV["OLLAMA_ALLOW_PUBLIC_WEBSITE"] = saved : ENV.delete("OLLAMA_ALLOW_PUBLIC_WEBSITE")
+    end
+
+    it "raises ConfigurationError when OLLAMA_BASE_URL is the public ollama.com site" do
+      StrategyBuilder.configure do |c|
+        c.ollama_base_url = "https://ollama.com"
+        c.coindcx_api_key = "k"
+        c.coindcx_api_secret = "s"
+      end
+
+      expect { StrategyBuilder.ollama_client }.to raise_error(StrategyBuilder::ConfigurationError, /OLLAMA_BASE_URL/)
+    end
+
+    it "does not raise when OLLAMA_ALLOW_PUBLIC_WEBSITE=1" do
+      ENV["OLLAMA_ALLOW_PUBLIC_WEBSITE"] = "1"
+      StrategyBuilder.configure do |c|
+        c.ollama_base_url = "https://ollama.com"
+        c.coindcx_api_key = "k"
+        c.coindcx_api_secret = "s"
+      end
+
+      expect { StrategyBuilder.ollama_client }.not_to raise_error
+    end
+  end
 end

@@ -154,5 +154,21 @@ RSpec.describe StrategyBuilder::CandidateValidator do
       result = validator.validate(bad)
       expect(result[:valid]).to be false
     end
+
+    it "rejects a non-hash candidate without raising" do
+      result = validator.validate("not a strategy object")
+      expect(result[:valid]).to be false
+      expect(result[:errors].join).to include("JSON object")
+    end
+  end
+
+  describe "#filter_valid" do
+    it "keeps only hash candidates when the model returns mixed JSON" do
+      good = TestData.strategy_candidate
+      mixed = ["preamble text", good, 42]
+      kept = validator.filter_valid(mixed)
+      expect(kept.size).to eq(1)
+      expect(kept.first[:candidate]).to eq(good)
+    end
   end
 end

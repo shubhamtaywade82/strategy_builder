@@ -34,7 +34,7 @@ module StrategyBuilder
       @ollama_temperature = 0.3
       # Large prompts + thinking models often need >120s on CPU-bound hosts.
       @ollama_timeout = Integer(ENV.fetch("OLLAMA_TIMEOUT", "240"))
-      # WSL2 → Windows Ollama: prefer http://127.0.0.1:11434 over "localhost" if you see EOF / connection reset.
+      # Prefer http://127.0.0.1:11434 (Docker publish or native `ollama serve` on same WSL2/Linux). Try 127.0.0.1 over "localhost" if you see EOF / connection reset.
       @ollama_base_url = ENV.fetch("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
       @ollama_num_ctx = Integer(ENV.fetch("OLLAMA_NUM_CTX", "8192"))
       @ollama_retries = Integer(ENV.fetch("OLLAMA_CLIENT_RETRIES", "2"))

@@ -19,7 +19,7 @@ module StrategyBuilder
         mode: :generate
       )
 
-      candidates = call_llm(prompt)
+      candidates = call_llm(prompt, response_schema: PromptBuilder::STRATEGY_CANDIDATES_GENERATE_SCHEMA)
       if candidates.empty?
         log_ollama_fallback(reason: "Ollama unreachable, stream dropped, invalid JSON, or empty parse")
         candidates = template_fallback_candidates(features: features, count: count)
@@ -40,7 +40,7 @@ module StrategyBuilder
         mode: :mutate
       )
 
-      candidates = call_llm(prompt)
+      candidates = call_llm(prompt, response_schema: PromptBuilder::STRATEGY_CANDIDATES_GENERATE_SCHEMA)
       if candidates.empty?
         log_ollama_fallback(reason: "mutate call failed same as generate")
         candidates = templates.map { |t| decorate_fallback_template(t, features) }
@@ -88,7 +88,8 @@ module StrategyBuilder
         "Try (this is the host Ruby uses, not ollama.com): curl -sS #{cfg.ollama_base_url}/api/tags | head -c 300",
         "Note: https://ollama.com/api/tags is only a public catalog of names; strategy_builder calls YOUR " \
           "OLLAMA_BASE_URL (usually local ollama serve).",
-        "WSL2 + Ollama on Windows: use 127.0.0.1 (default) or the Windows host IP from `ip route show default | awk '{print $3}'`.",
+        "Same machine (native or Docker ollama/ollama on WSL2/Linux): OLLAMA_BASE_URL=http://127.0.0.1:11434. " \
+          "WSL2 client + Ollama on Windows host only: Windows IP from `ip route show default | awk '{print $3}'`.",
         "Stability: run `ollama ps`, use a smaller/faster model, lower OLLAMA_NUM_CTX (e.g. 4096), " \
           "raise OLLAMA_TIMEOUT for big thinking models, watch `ollama serve` logs for unload/OOM."
       ]
@@ -121,20 +122,24 @@ module StrategyBuilder
     end
 
     # Call LLM with retry logic and backoff for flaky local Ollama / truncated streams.
-    def call_llm(prompt)
+    # @param response_schema [Hash, nil] Ollama JSON schema; nil uses ollama-client's permissive any-JSON schema.
+    def call_llm(prompt, response_schema: nil)
       max_attempts = [StrategyBuilder.configuration.ollama_llm_max_attempts, 1].max
       attempts = 0
+      schema_for_llm = response_schema || OllamaGeneratePlanner::ANY_JSON_SCHEMA
 
       loop do
         attempts += 1
         begin
           raw = @planner.run(
             prompt: prompt,
-            context: { system: PromptBuilder::SYSTEM_PROMPT }
+            context: {},
+            system_prompt: PromptBuilder::SYSTEM_PROMPT,
+            schema: schema_for_llm
           )
 
           if raw.is_a?(Hash) || raw.is_a?(Array)
-            return raw.is_a?(Array) ? raw : [raw]
+            return normalize_llm_candidate_list(raw)
           end
 
           parsed = CandidateParser.parse(raw.to_s)
@@ -206,6 +211,15 @@ module StrategyBuilder
     end
 
     # Strip large arrays from features to fit context window.
+    def normalize_llm_candidate_list(raw)
+      list = raw.is_a?(Array) ? raw : [raw]
+      list.filter_map do |item|
+        next unless item.is_a?(Hash)
+
+        CandidateParser.symbolize_keys_deep(item)
+      end
+    end
+
     def compact_features(features)
       compacted = features.dup
       compacted.delete(:candles)

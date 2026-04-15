@@ -5,23 +5,82 @@ require 'json_schemer'
 module StrategyBuilder
   class CandidateParser
     # Parse LLM output into strategy candidate hashes.
-    # Handles both single objects and arrays, strips markdown fences.
+    # Handles both single objects and arrays, strips markdown fences, and extracts the first
+    # balanced JSON array/object when the model wraps JSON in prose (so JSON.parse on the
+    # whole body would fail).
     def self.parse(raw_output)
-      cleaned = strip_markdown_fences(raw_output)
-      parsed = JSON.parse(cleaned)
+      cleaned = strip_markdown_fences(raw_output.to_s.strip)
+      parsed = parse_json_loose(cleaned)
+      return [] if parsed.nil?
 
       candidates = parsed.is_a?(Array) ? parsed : [parsed]
-      candidates.map { |c| symbolize_keys_deep(c) }
+      candidates.filter_map do |c|
+        next unless c.is_a?(Hash)
+
+        symbolize_keys_deep(c)
+      end
     rescue JSON::ParserError => e
       StrategyBuilder.logger.error { "Failed to parse LLM output: #{e.message}" }
       StrategyBuilder.logger.debug { "Raw output: #{raw_output}" }
       []
     end
 
+    def self.parse_json_loose(text)
+      JSON.parse(text)
+    rescue JSON::ParserError
+      fragment = extract_balanced_json_fragment(text)
+      JSON.parse(fragment) if fragment
+    end
+
     def self.strip_markdown_fences(text)
       text = text.to_s.strip
       text = text.gsub(/\A```(?:json)?\s*\n?/, "").gsub(/\n?```\s*\z/, "")
       text.strip
+    end
+
+    # First balanced JSON object or array starting at the earliest `{` or `[` (handles leading prose).
+    def self.extract_balanced_json_fragment(text)
+      return nil if text.nil? || text.empty?
+
+      start_idx = text.index(/[\[{]/)
+      return nil unless start_idx
+
+      stack = []
+      in_string = false
+      escape = false
+
+      i = start_idx
+      while i < text.length
+        ch = text.getbyte(i)
+
+        if in_string
+          if escape
+            escape = false
+          elsif ch == 92 # \
+            escape = true
+          elsif ch == 34 # "
+            in_string = false
+          end
+        else
+          case ch
+          when 34 # "
+            in_string = true
+          when 123 # {
+            stack << 125 # }
+          when 91 # [
+            stack << 93 # ]
+          when 125, 93 # }, ]
+            expected = stack.pop
+            return nil if expected != ch
+
+            return text[start_idx..i] if stack.empty?
+          end
+        end
+
+        i += 1
+      end
+
+      nil
     end
 
     def self.symbolize_keys_deep(obj)
@@ -53,6 +112,13 @@ module StrategyBuilder
 
     # Validate a candidate hash. Returns { valid: bool, errors: [] }
     def validate(candidate)
+      unless candidate.is_a?(Hash)
+        return {
+          valid: false,
+          errors: ["Candidate must be a JSON object, got #{candidate.class.name} (#{candidate.inspect[0, 120]})"]
+        }
+      end
+
       errors = []
 
       # Basic structural checks (always run)
@@ -80,7 +146,8 @@ module StrategyBuilder
         if result[:valid]
           { candidate: candidate, validation: result }
         else
-          StrategyBuilder.logger.warn { "Rejected candidate '#{candidate[:name]}': #{result[:errors].join(', ')}" }
+          label = candidate.is_a?(Hash) ? candidate[:name] : candidate.class.name
+          StrategyBuilder.logger.warn { "Rejected candidate '#{label}': #{result[:errors].join(', ')}" }
           nil
         end
       end

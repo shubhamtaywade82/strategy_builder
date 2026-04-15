@@ -67,7 +67,9 @@ cp .env.example .env
 
 bundle install
 
-# Ensure Ollama is running; OLLAMA_AGENT_MODEL must match a local tag (`ollama list`)
+# Ollama: OLLAMA_BASE_URL must point at `ollama serve` (e.g. http://127.0.0.1:11434), not https://ollama.com (marketing site).
+# On WSL2 with Ollama in Docker publishing 11434, 127.0.0.1:11434 from the same distro is correct.
+# OLLAMA_AGENT_MODEL must match a tag from `ollama list` on that server.
 ollama pull llama3.1:8b
 ```
 
@@ -76,7 +78,8 @@ ollama pull llama3.1:8b
 ### Full Pipeline
 
 ```bash
-ruby exe/strategy_builder pipeline "Find breakout strategies for BTC and ETH"
+# Omit --fresh to keep appending to output/.../strategies/catalog.json; use --fresh for a clean catalog.
+ruby exe/strategy_builder pipeline "Find breakout strategies for BTC and ETH" --fresh
 ```
 
 ### Step-by-Step

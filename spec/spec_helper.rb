@@ -24,6 +24,7 @@ RSpec.configure do |config|
       c.coindcx_api_key = "test_key"
       c.coindcx_api_secret = "test_secret"
       c.ollama_model = "test-model"
+      c.ollama_base_url = "http://127.0.0.1:11434"
       c.logger = Logger.new(File::NULL)
       c.output_dir = Dir.mktmpdir
     end

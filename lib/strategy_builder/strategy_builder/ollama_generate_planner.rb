@@ -40,7 +40,7 @@ module StrategyBuilder
 
       @client.generate(
         prompt: full_prompt,
-        schema: schema || ANY_JSON_SCHEMA,
+        schema: schema.nil? ? ANY_JSON_SCHEMA : schema,
         strict: true
       )
     end

@@ -103,6 +103,7 @@ module StrategyBuilder
     def ollama_client
       @ollama_client ||= begin
         warn_if_ollama_base_url_is_public_website
+        reject_public_ollama_website_base_url!
         config = Ollama::Config.new
         config.base_url = configuration.ollama_base_url if configuration.ollama_base_url
         config.model = configuration.ollama_model
@@ -121,13 +122,23 @@ module StrategyBuilder
       @ollama_public_base_url_warned = false
     end
 
+    # True when OLLAMA_BASE_URL points at the public ollama.com site (not `ollama serve` HTTP API).
+    def public_ollama_website_base_url?(url_string)
+      url = url_string.to_s
+      return false if url.strip.empty?
+
+      host = URI.parse(url).host&.downcase
+      host&.end_with?("ollama.com") == true
+    rescue URI::InvalidURIError
+      false
+    end
+
     # https://ollama.com is the marketing site / catalog, not the same as `ollama serve` on your machine.
     def warn_if_ollama_base_url_is_public_website
       return if @ollama_public_base_url_warned
 
       url = configuration.ollama_base_url.to_s
-      host = URI.parse(url).host&.downcase
-      return unless host&.end_with?("ollama.com")
+      return unless public_ollama_website_base_url?(url)
 
       @ollama_public_base_url_warned = true
       logger.warn do
@@ -135,6 +146,21 @@ module StrategyBuilder
           "ollama-client expects the open-source server API (e.g. http://127.0.0.1:11434). " \
           "Unset OLLAMA_BASE_URL or set it to your machine's Ollama listen address; then `ollama pull` your model tag."
       end
+    end
+
+    # Stops the pipeline before LLM calls that would only EOF/reset against the marketing host.
+    # Override with OLLAMA_ALLOW_PUBLIC_WEBSITE=1 if you truly intend a custom proxy at that hostname.
+    def reject_public_ollama_website_base_url!
+      url = configuration.ollama_base_url.to_s
+      return unless public_ollama_website_base_url?(url)
+      return if ENV.fetch("OLLAMA_ALLOW_PUBLIC_WEBSITE", "").strip == "1"
+
+      raise ConfigurationError,
+        "OLLAMA_BASE_URL=#{url} is not a valid Ollama HTTP API base. Use the URL where `ollama serve` listens " \
+        "(e.g. http://127.0.0.1:11434 for native Ollama or Docker publishing 11434 on the same Linux/WSL2 machine). " \
+        "Only if the client runs in WSL2 and Ollama runs on the Windows host instead, use the Windows IP from " \
+        "`ip route show default | awk '{print $3}'`. To bypass this check (not recommended), set " \
+        "OLLAMA_ALLOW_PUBLIC_WEBSITE=1."
     end
   end
 end

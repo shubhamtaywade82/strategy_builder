@@ -4,6 +4,20 @@ module StrategyBuilder
   class PromptBuilder
     SCHEMA_PATH = File.expand_path("../agent/schemas/strategy_candidate.json", __dir__)
 
+    # Passed to Ollama /api/generate as the response format schema. Tight enough to block bare
+    # JSON strings (e.g. "_") while staying looser than full StrategyCandidate JSON Schema so
+    # smaller models can still satisfy the contract; Ruby-side CandidateValidator enforces detail.
+    STRATEGY_CANDIDATES_GENERATE_SCHEMA = {
+      "type" => "array",
+      "minItems" => 1,
+      "maxItems" => 8,
+      "items" => {
+        "type" => "object",
+        "required" => %w[name family timeframes entry exit risk],
+        "additionalProperties" => true
+      }
+    }.freeze
+
     SYSTEM_PROMPT = <<~SYSTEM
       You are a quantitative strategy researcher for cryptocurrency futures markets.
       Your role is to propose trading strategy candidates based on computed market features.
