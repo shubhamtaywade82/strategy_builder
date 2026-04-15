@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'json_schemer'
+
 module StrategyBuilder
   class CandidateParser
     # Parse LLM output into strategy candidate hashes.
@@ -44,9 +46,9 @@ module StrategyBuilder
     def initialize
       schema_data = JSON.parse(File.read(SCHEMA_PATH))
       @schema = JSONSchemer.schema(schema_data)
-    rescue LoadError
+    rescue LoadError, NameError => e
       @schema = nil
-      StrategyBuilder.logger.warn { "json_schemer not available, using basic validation only" }
+      StrategyBuilder.logger.warn { "JSON Schema unavailable (#{e.class}: #{e.message}); using basic validation only" }
     end
 
     # Validate a candidate hash. Returns { valid: bool, errors: [] }

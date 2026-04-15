@@ -38,6 +38,7 @@ module StrategyBuilder
   autoload :PromptBuilder,      "strategy_builder/strategy_builder/prompt_builder"
   autoload :CandidateParser,    "strategy_builder/strategy_builder/candidate_parser"
   autoload :CandidateValidator, "strategy_builder/strategy_builder/candidate_validator"
+  autoload :OllamaGeneratePlanner, "strategy_builder/strategy_builder/ollama_generate_planner"
   autoload :StrategyGenerator,  "strategy_builder/strategy_builder/strategy_generator"
   autoload :StrategyCatalog,    "strategy_builder/strategy_builder/strategy_catalog"
   autoload :StrategyTemplates,  "strategy_builder/strategy_builder/strategy_templates"
@@ -101,6 +102,7 @@ module StrategyBuilder
     def ollama_client
       @ollama_client ||= begin
         config = Ollama::Config.new
+        config.base_url = configuration.ollama_base_url if configuration.ollama_base_url
         config.model = configuration.ollama_model
         config.temperature = configuration.ollama_temperature
         config.timeout = configuration.ollama_timeout

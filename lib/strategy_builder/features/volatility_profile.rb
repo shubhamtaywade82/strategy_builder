@@ -7,7 +7,7 @@ module StrategyBuilder
     EXPANSION_THRESHOLD = 1.5    # ATR > 150% of rolling mean = expansion
 
     # Compute ATR series for candles.
-    # Returns Array<Float> aligned to candle indices (first N-1 are nil).
+    # Returns Array with length candles.size; indices 0..period-1 are nil (warmup).
     def self.atr(candles, period: DEFAULT_ATR_PERIOD)
       return [] if candles.size < 2
 
@@ -29,8 +29,7 @@ module StrategyBuilder
         atr_values << new_atr
       end
 
-      # Pad front to align with candle array (offset by 1 for true_range calc)
-      [nil] + atr_values
+      atr_values
     end
 
     # ATR as percentage of price.

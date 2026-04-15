@@ -358,7 +358,7 @@ DEPENDENCIES
   indicators (~> 1.0)
   json_schemer (~> 2.0)
   numo-narray
-  ollama-client (~> 0.2)
+  ollama-client (~> 0.2, < 1)
   pastel (~> 0.8)
   rspec (~> 3.13)
   rubocop (~> 1.60)

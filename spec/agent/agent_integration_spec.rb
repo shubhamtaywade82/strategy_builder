@@ -3,6 +3,66 @@
 require "spec_helper"
 
 RSpec.describe StrategyBuilder::AgentLoop do
+  describe "#run" do
+    it "runs the manual pipeline when Executor is unavailable" do
+      loop = described_class.new
+      allow(loop).to receive(:build_executor).and_return(nil)
+      allow(loop).to receive(:run_manual_pipeline).with("research").and_return([{ type: :manual_done }])
+
+      out = loop.run(query: "research")
+
+      expect(out[:final_result]).to be_nil
+      expect(out[:steps].first).to include(type: :executor_unavailable)
+      expect(out[:steps]).to include(type: :manual_done)
+    end
+
+    it "falls back to manual pipeline and clears final_result when Executor raises Ollama::Error" do
+      loop = described_class.new
+      executor = instance_double(Ollama::Agent::Executor)
+      allow(loop).to receive(:build_executor).and_return(executor)
+      allow(executor).to receive(:run).and_raise(Ollama::Error.new("upstream failure"))
+      allow(loop).to receive(:run_manual_pipeline).with("research").and_return([{ type: :recovered }])
+
+      out = loop.run(query: "research")
+
+      expect(out[:final_result]).to be_nil
+      expect(out[:steps]).to include(hash_including(type: :error, content: "upstream failure"))
+      expect(out[:steps]).to include(type: :recovered)
+    end
+
+    it "returns executor output when the tool loop completes" do
+      loop = described_class.new
+      executor = instance_double(Ollama::Agent::Executor)
+      allow(loop).to receive(:build_executor).and_return(executor)
+      allow(executor).to receive(:run).and_return("synthesis complete")
+
+      out = loop.run(query: "research")
+
+      expect(out[:final_result]).to eq("synthesis complete")
+      expect(out[:steps].last).to include(type: :executor_result, content: "synthesis complete")
+    end
+  end
+
+  describe "#propose" do
+    it "does not add the same strategy twice when discovery covers multiple instruments" do
+      gen = instance_double(StrategyBuilder::StrategyGenerator)
+      allow(StrategyBuilder::StrategyGenerator).to receive(:new).and_return(gen)
+      dup = TestData.strategy_candidate.merge(name: "Shared Strategy", family: "session_breakout")
+      allow(gen).to receive(:generate).and_return([dup])
+
+      loop = described_class.new
+      features_by_instrument = {
+        "B-BTC_USDT" => { instrument: "B-BTC_USDT" },
+        "B-ETH_USDT" => { instrument: "B-ETH_USDT" }
+      }
+
+      out = loop.propose(features_by_instrument: features_by_instrument)
+
+      expect(out.size).to eq(1)
+      expect(StrategyBuilder::StrategyCatalog.new.size).to eq(1)
+    end
+  end
+
   describe "#validate" do
     it "builds backtest signals through SignalGeneratorFactory" do
       strategy = TestData.strategy_candidate

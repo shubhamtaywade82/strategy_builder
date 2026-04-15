@@ -2,8 +2,8 @@
 
 source "https://rubygems.org"
 
-# LLM execution layer
-gem "ollama-client", "~> 0.2"
+# LLM execution layer (1.x removed Ollama::Agent::Planner — keep 0.2.x API this code expects)
+gem "ollama-client", "~> 0.2", "< 1"
 
 # Market data
 gem "coindcx-client", "~> 0.1"

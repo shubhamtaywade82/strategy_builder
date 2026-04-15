@@ -57,26 +57,7 @@ module StrategyBuilder
     # Returns: { steps: [...], final_result: ..., strategies_found: Int }
     def run(query:)
       @logger.info { "Agent starting: #{query}" }
-
-      # Phase 1: Use Executor for tool-calling loop
-      executor = build_executor
-      steps = []
-
-      begin
-        result = executor.run(
-          system: AGENT_SYSTEM_PROMPT,
-          user: build_initial_prompt(query)
-        )
-
-        steps << { type: :executor_result, content: result }
-      rescue Ollama::Error => e
-        @logger.error { "Executor error: #{e.message}" }
-        steps << { type: :error, content: e.message }
-
-        # Fallback: run pipeline manually
-        steps.concat(run_manual_pipeline(query))
-      end
-
+      result, steps = run_with_executor(executor: build_executor, query: query)
       catalog = StrategyCatalog.new
       {
         steps: steps,
@@ -129,6 +110,7 @@ module StrategyBuilder
       generator = StrategyGenerator.new
       catalog = StrategyCatalog.new
       all_candidates = []
+      seen_proposal_keys = {}
 
       features_by_instrument.each do |instrument, features|
         @logger.info { "Proposing strategies for #{instrument} (mode: #{mode})..." }
@@ -140,6 +122,13 @@ module StrategyBuilder
                      end
 
         candidates.each do |candidate|
+          key = proposal_dedupe_key(candidate)
+          if seen_proposal_keys[key]
+            @logger.info { "Skipping duplicate proposal #{candidate[:name]} (#{key})" }
+            next
+          end
+
+          seen_proposal_keys[key] = true
           id = catalog.add(candidate)
           all_candidates << { id: id, name: candidate[:name], instrument: instrument }
           @logger.info { "Added candidate: #{candidate[:name]} (#{id})" }
@@ -241,6 +230,42 @@ module StrategyBuilder
 
     private
 
+    # Returns [final_result, steps] where final_result is nil when manual pipeline ran alone or after Ollama::Error.
+    def run_with_executor(executor:, query:)
+      steps = []
+      return run_without_executor_tooling(query, steps) if executor.nil?
+
+      run_executor_tool_loop(executor, query, steps)
+    end
+
+    def proposal_dedupe_key(candidate)
+      base_name = candidate[:name].to_s.sub(/\s*\(offline template\)\s*\z/i, "").strip.downcase
+      family = candidate[:family].to_s.downcase
+      "#{family}:#{base_name}"
+    end
+
+    def run_without_executor_tooling(query, steps)
+      @logger.warn { 'Ollama::Agent::Executor unavailable; running manual pipeline' }
+      steps << { type: :executor_unavailable, content: 'manual_pipeline' }
+      steps.concat(run_manual_pipeline(query))
+      [nil, steps]
+    end
+
+    def run_executor_tool_loop(executor, query, steps)
+      result = executor.run(system: AGENT_SYSTEM_PROMPT, user: build_initial_prompt(query))
+      steps << { type: :executor_result, content: result }
+      [result, steps]
+    rescue Ollama::Error => e
+      executor_failed_fallback(e, query, steps)
+    end
+
+    def executor_failed_fallback(error, query, steps)
+      @logger.error { "Executor error: #{error.message}" }
+      steps << { type: :error, content: error.message }
+      steps.concat(run_manual_pipeline(query))
+      [nil, steps]
+    end
+
     def build_executor
       tools = {}
       @registry.all.each do |tool|
@@ -270,7 +295,7 @@ module StrategyBuilder
     end
 
     # Fallback: run the pipeline without the Executor tool loop.
-    def run_manual_pipeline(query)
+    def run_manual_pipeline(_query)
       steps = []
 
       # Phase 1: Discover
@@ -283,7 +308,7 @@ module StrategyBuilder
 
       # Phase 3: Validate
       validate
-      steps << { type: :validate, status: "complete" }
+      steps << { type: :validate, status: 'complete' }
 
       # Phase 4: Rank
       ranked = rank
@@ -291,10 +316,9 @@ module StrategyBuilder
 
       # Phase 5: Document
       document
-      steps << { type: :document, status: "complete" }
+      steps << { type: :document, status: 'complete' }
 
       steps
     end
-
   end
 end

@@ -67,8 +67,8 @@ cp .env.example .env
 
 bundle install
 
-# Ensure Ollama is running with a thinking-capable model
-ollama pull qwen3:8b
+# Ensure Ollama is running; OLLAMA_AGENT_MODEL must match a local tag (`ollama list`)
+ollama pull llama3.1:8b
 ```
 
 ## Usage

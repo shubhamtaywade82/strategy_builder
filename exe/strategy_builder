@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "bundler/setup"
 require "thor"
 require "dotenv/load"
 require_relative "../lib/strategy_builder"
@@ -124,8 +125,17 @@ module StrategyBuilder
     option :instruments, type: :array, default: nil
     option :timeframes, type: :array, default: nil
     option :days, type: :numeric, default: 30
+    option :fresh, type: :boolean, default: false,
+                    desc: "Clear persisted catalog (output/.../strategies/catalog.json) before this run"
     def pipeline(query)
       configure!
+
+      if options[:fresh]
+        cleared = StrategyCatalog.new
+        cleared.clear!
+        puts "Cleared strategy catalog (--fresh)."
+      end
+
       agent = AgentLoop.new
 
       puts "Phase 1: Discovering features..."
@@ -137,7 +147,7 @@ module StrategyBuilder
 
       puts "Phase 2: Proposing strategies..."
       candidates = agent.propose(features_by_instrument: features)
-      puts "  #{candidates.size} candidates proposed"
+      puts "  #{candidates.size} unique candidates added to catalog (duplicates across instruments are skipped)"
 
       puts "Phase 3: Backtesting..."
       agent.validate(days_back: [options[:days] * 3, 365].min)
@@ -163,7 +173,7 @@ module StrategyBuilder
       StrategyBuilder.configure do |c|
         c.coindcx_api_key = ENV.fetch("COINDCX_API_KEY", nil)
         c.coindcx_api_secret = ENV.fetch("COINDCX_API_SECRET", nil)
-        c.ollama_model = ENV.fetch("OLLAMA_AGENT_MODEL", "qwen3:8b")
+        c.ollama_model = StrategyBuilder::Configuration.ollama_model_from_env
         c.default_instruments = options[:instruments] if options[:instruments]
         c.default_timeframes = options[:timeframes] if options[:timeframes]
       end

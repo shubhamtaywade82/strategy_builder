@@ -149,4 +149,65 @@ RSpec.describe StrategyBuilder::StrategyCatalog do
       expect(proposed.size).to eq(1)
     end
   end
+
+  describe "#attach_backtest" do
+    it "merges walk-forward results from multiple instruments for ranking" do
+      id = catalog.add(candidate)
+      wf_btc = {
+        aggregate: {
+          oos_trade_count: 5,
+          oos_expectancy: 0.1,
+          oos_win_rate: 0.5,
+          oos_profit_factor: 1.2,
+          oos_max_drawdown: 0.05,
+          oos_avg_r: 0.1,
+          is_expectancy: 0.2,
+          is_profit_factor: 1.3,
+          avg_degradation: 0.3
+        },
+        stability_score: 0.6,
+        passes_walk_forward: false,
+        folds: []
+      }
+      catalog.attach_backtest(
+        id,
+        metrics: wf_btc[:aggregate],
+        walk_forward: wf_btc,
+        instrument: "B-BTC_USDT",
+        candle_count: 100
+      )
+
+      wf_eth = {
+        aggregate: {
+          oos_trade_count: 15,
+          oos_expectancy: 0.3,
+          oos_win_rate: 0.6,
+          oos_profit_factor: 1.5,
+          oos_max_drawdown: 0.08,
+          oos_avg_r: 0.2,
+          is_expectancy: 0.4,
+          is_profit_factor: 1.6,
+          avg_degradation: 0.2
+        },
+        stability_score: 0.4,
+        passes_walk_forward: false,
+        folds: []
+      }
+      catalog.attach_backtest(
+        id,
+        metrics: wf_eth[:aggregate],
+        walk_forward: wf_eth,
+        instrument: "B-ETH_USDT",
+        candle_count: 200
+      )
+
+      row = catalog.get(id)[:backtest_results]
+      expect(row[:instruments].keys).to contain_exactly("B-BTC_USDT", "B-ETH_USDT")
+      expect(row[:walk_forward][:aggregate][:oos_trade_count]).to eq(20)
+      expect(row[:walk_forward][:aggregate][:oos_expectancy]).to eq(0.2)
+      expect(row[:walk_forward][:aggregate][:oos_max_drawdown]).to eq(0.08)
+      expect(row[:walk_forward][:stability_score]).to eq(0.5)
+      expect(row[:candle_count]).to eq(300)
+    end
+  end
 end

@@ -72,14 +72,15 @@ module StrategyBuilder
     private
 
     def fetch_batch(instrument:, resolution:, from:, to:)
-      # CoinDCX futures candle endpoint
-      # GET /market_data/candles?pair=B-BTC_USDT&interval=5&start_time=...&end_time=...
-      @client.futures.market_data.candles(
+      # CoinDCX futures: coindcx-client exposes GET /market_data/candlesticks via
+      # CoinDCX::REST::Futures::MarketData#list_candlesticks (not #candles).
+      raw = @client.futures.market_data.list_candlesticks(
         pair: instrument,
-        interval: resolution,
-        start_time: from,
-        end_time: to
+        from: from,
+        to: to,
+        resolution: resolution
       )
+      coerce_candlestick_rows(raw)
     rescue CoinDCX::Errors::RateLimitError => e
       @logger.warn { "Rate limited, backing off: #{e.message}" }
       sleep(e.respond_to?(:retry_after) ? e.retry_after : 2)
@@ -87,6 +88,18 @@ module StrategyBuilder
     rescue CoinDCX::Errors::TransportError => e
       @logger.error { "Transport error fetching candles: #{e.message}" }
       nil
+    end
+
+    def coerce_candlestick_rows(raw)
+      case raw
+      when Array then raw
+      when Hash
+        raw["data"] || raw[:data] ||
+          raw["candles"] || raw[:candles] ||
+          raw["candlesticks"] || raw[:candlesticks] || []
+      else
+        []
+      end
     end
 
     def normalize_candle(raw, timeframe)

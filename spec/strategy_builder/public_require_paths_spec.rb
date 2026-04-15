@@ -4,6 +4,7 @@ require "spec_helper"
 
 RSpec.describe "public require paths" do
   {
+    "strategy_builder/backtest/signal_generator_factory" => StrategyBuilder::SignalGeneratorFactory,
     "strategy_builder/market_data/candle_store" => StrategyBuilder::CandleStore,
     "strategy_builder/strategy_builder/candidate_validator" => StrategyBuilder::CandidateValidator,
     "strategy_builder/backtest/slippage_model" => StrategyBuilder::SlippageModel,
