@@ -10,7 +10,7 @@ RSpec.describe StrategyBuilder::BacktestEngine do
   # Simple signal generator: enter long every 50 candles
   let(:signal_generator) do
     counter = 0
-    lambda do |candles_so_far, _strat|
+    lambda do |candles_so_far, _strat, *_mtf|
       counter += 1
       if counter % 50 == 0
         atr = candles_so_far.last[:close] * 0.01
@@ -59,7 +59,7 @@ RSpec.describe StrategyBuilder::BacktestEngine do
         current_trail_stop: 90.0
       )
       candle = { high: 120, low: 99, close: 110, timestamp: 999 }
-      trade = engine.send(:close_position, pos, { reason: :target_hit, price: 110.0 }, candle, exit_idx)
+      trade = engine.send(:close_position, pos, { reason: :target_hit, price: 110.0 }, candle, exit_idx, [candle])
       expect(trade.hold_candles).to eq(exit_idx - entry_idx)
     end
 
@@ -83,13 +83,13 @@ RSpec.describe StrategyBuilder::BacktestEngine do
         current_trail_stop: 90.0
       )
       candle = { high: 115, low: 99, close: 110, timestamp: 2 }
-      engine.send(:apply_partial_exit, pos, { fraction: 0.33, price: 110.0 }, candle)
+      engine.send(:apply_partial_exit, pos, { fraction: 0.33, price: 110.0 }, candle, [candle])
       expect(pos.remaining_size).to be_within(1e-9).of(0.34)
     end
 
     it "force-closes open positions at end of data" do
       # Signal on last candle — should be force-closed with :end_of_data
-      always_signal = lambda do |candles_so_far, _strat|
+      always_signal = lambda do |candles_so_far, _strat, *_mtf|
         if candles_so_far.size == candles.size
           { direction: :long, entry_price: candles_so_far.last[:close], stop_distance: 1.0, size: 1.0 }
         end
@@ -144,7 +144,7 @@ RSpec.describe StrategyBuilder::WalkForward do
 
   let(:signal_generator) do
     counter = 0
-    lambda do |candles_so_far, _strat|
+    lambda do |candles_so_far, _strat, *_mtf|
       counter += 1
       if counter % 30 == 0
         { direction: :long, entry_price: candles_so_far.last[:close], stop_distance: candles_so_far.last[:close] * 0.01, size: 1.0 }

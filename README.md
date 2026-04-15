@@ -69,7 +69,7 @@ bundle install
 
 # Ollama (local): OLLAMA_BASE_URL should be where `ollama serve` listens (e.g. http://127.0.0.1:11434).
 # OLLAMA_AGENT_MODEL must match a tag from `ollama list` on that server.
-ollama pull llama3.1:8b
+ollama pull qwen3.5:4b
 
 # Ollama Cloud (optional): hosted inference at https://ollama.com/api — use TLS + API key.
 # export STRATEGY_BUILDER_OLLAMA_CLOUD=1

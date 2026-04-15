@@ -39,7 +39,9 @@ module TestData
 
   def self.candle_series(count: 200, base_price: 100.0, timeframe: "5m")
     price = base_price
-    start_ts = Time.now.to_i - (count * 300) # 5m intervals
+    # Anchor at UTC midnight so Asia (0–8h) then London are present in long series (session-condition tests).
+    start_ts = Time.utc(2024, 1, 15, 0, 0, 0).to_i
+    step = timeframe == "1h" ? 3600 : (timeframe == "15m" ? 900 : 300)
 
     count.times.map do |i|
       change = (rand - 0.48) * 2.0 # slight upward bias
@@ -50,7 +52,7 @@ module TestData
       low = price - rand * 1.5
 
       candle(
-        timestamp: start_ts + (i * 300),
+        timestamp: start_ts + (i * step),
         open: price - change,
         high: high,
         low: [low, 0.5].max,
@@ -82,7 +84,7 @@ module TestData
       timeframes: %w[15m 5m],
       session: %w[london],
       entry: {
-        conditions: %w[session_high_break volume_confirmation],
+        conditions: %w[asia_range_defined session_high_break volume_confirmation],
         direction: "long"
       },
       exit: {

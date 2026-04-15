@@ -72,5 +72,45 @@ module StrategyBuilder
         candle_count: session_candles.size
       }
     end
+
+    # UTC calendar day [start_i, end_i) for the day containing +reference_candle+.
+    def self.utc_day_bounds(reference_candle)
+      ts = reference_candle[:timestamp]
+      t = ts.is_a?(Time) ? ts.utc : Time.at(ts).utc
+      day_start = Time.utc(t.year, t.month, t.day)
+      [day_start.to_i, day_start.to_i + 86_400]
+    end
+
+    # Candles tagged +session+ on the same UTC date as +reference_candle+, drawn only from +candles+.
+    def self.candles_for_session_on_day(candles, session:, reference_candle:)
+      return [] if candles.nil? || candles.empty?
+
+      day_start_i, day_end_i = utc_day_bounds(reference_candle)
+      tagged = tag_candles(candles)
+      tagged.select do |c|
+        ts = c[:timestamp].is_a?(Time) ? c[:timestamp].to_i : c[:timestamp]
+        ts >= day_start_i && ts < day_end_i && c[:sessions].include?(session)
+      end
+    end
+
+    # Asia session high/low for the UTC day of +reference_candle+, using only history in +candles+ (prefix-safe).
+    # Returns { high:, low:, candle_count: } or nil when the range is not yet meaningful.
+    def self.asia_session_box(candles, reference_candle, min_candles: 3, min_range_atr_fraction: 0.02)
+      return nil if candles.nil? || candles.empty? || reference_candle.nil?
+
+      asia = candles_for_session_on_day(candles, session: "asia", reference_candle: reference_candle)
+      return nil if asia.size < min_candles
+
+      high = asia.map { |c| c[:high] }.max
+      low = asia.map { |c| c[:low] }.min
+      range = high - low
+      return nil if range <= 1e-12
+
+      atr = VolatilityProfile.atr(candles).compact.last
+      atr ||= range
+      return nil if range < atr * min_range_atr_fraction
+
+      { high: high, low: low, candle_count: asia.size }
+    end
   end
 end

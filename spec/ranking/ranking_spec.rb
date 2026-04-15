@@ -42,7 +42,7 @@ RSpec.describe StrategyBuilder::Scorer do
     it "returns component scores" do
       result = described_class.score(walk_forward_result: good_walk_forward)
       expect(result[:component_scores]).to include(
-        :expectancy, :profit_factor, :oos_stability, :drawdown_resilience
+        :expectancy, :profit_factor, :oos_stability, :drawdown_resilience, :regime_robustness
       )
     end
   end

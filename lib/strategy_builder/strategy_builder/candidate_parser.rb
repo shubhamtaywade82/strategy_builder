@@ -217,7 +217,8 @@ module StrategyBuilder
       return ["Entry is nil"] if entry.nil?
       return ["Entry conditions missing"] unless entry[:conditions].is_a?(Array) && entry[:conditions].any?
 
-      []
+      unknown = entry[:conditions].reject { |c| ConditionRegistry.registered?(c) }
+      unknown.map { |c| "Unknown entry condition: #{c}" }
     end
 
     def check_exit(exit_config)

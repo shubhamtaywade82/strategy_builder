@@ -11,7 +11,8 @@ module StrategyBuilder
       drawdown_resilience: 0.15,
       session_consistency: 0.10,
       parameter_robustness: 0.10,
-      trade_frequency: 0.05
+      trade_frequency: 0.02,
+      regime_robustness: 0.03
     }.freeze
 
     # Score a strategy based on its walk-forward results.
@@ -26,7 +27,8 @@ module StrategyBuilder
         drawdown_resilience: normalize_drawdown(agg[:oos_max_drawdown], agg[:oos_expectancy]),
         session_consistency: session_results ? score_session_consistency(session_results) : 0.5,
         parameter_robustness: robustness_result ? robustness_result[:robustness_score] : 0.5,
-        trade_frequency: normalize_trade_frequency(agg[:oos_trade_count])
+        trade_frequency: normalize_trade_frequency(agg[:oos_trade_count]),
+        regime_robustness: normalize_regime_robustness(walk_forward_result[:regime_slices])
       }
 
       final = WEIGHTS.sum { |key, weight| components[key] * weight }
@@ -70,11 +72,17 @@ module StrategyBuilder
     private_class_method def self.score_session_consistency(session_results)
       return 0.5 if session_results.nil? || session_results.empty?
 
-      profitable_sessions = session_results.count { |_s, m| m[:expectancy] > 0 }
+      profitable_sessions = session_results.count { |_s, m| m.is_a?(Hash) && m[:expectancy].to_f > 0 }
       total_sessions = session_results.size
       return 0.0 if total_sessions.zero?
 
       (profitable_sessions.to_f / total_sessions).round(4)
+    end
+
+    private_class_method def self.normalize_regime_robustness(regime_slices)
+      return 0.5 unless regime_slices.is_a?(Hash) && regime_slices.key?(:fraction_positive_expectancy)
+
+      regime_slices[:fraction_positive_expectancy].to_f.clamp(0.0, 1.0)
     end
   end
 
@@ -144,7 +152,7 @@ module StrategyBuilder
 
     PERTURBATION_STEPS = 5
 
-    def self.analyze(strategy:, candles:, engine:, signal_generator_factory:)
+    def self.analyze(strategy:, candles:, engine:, signal_generator_factory:, mtf_candles: nil)
       ranges = strategy[:parameter_ranges] || {}
       return { robustness_score: 0.5, tested_params: 0 } if ranges.empty?
 
@@ -164,7 +172,12 @@ module StrategyBuilder
           mutated = deep_merge_param(strategy, param_name, value)
           sg = signal_generator_factory.call(mutated)
 
-          bt = engine.run(strategy: mutated, candles: candles, signal_generator: sg)
+          bt = engine.run(
+            strategy: mutated,
+            candles: candles,
+            mtf_candles: mtf_candles,
+            signal_generator: sg
+          )
           param_results << { value: value, expectancy: bt[:metrics][:expectancy] }
         end
 

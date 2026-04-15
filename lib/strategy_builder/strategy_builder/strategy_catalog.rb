@@ -110,7 +110,9 @@ module StrategyBuilder
       per[instrument] = {
         metrics: latest[:metrics],
         walk_forward: latest[:walk_forward],
-        candle_count: latest[:candle_count]
+        candle_count: latest[:candle_count],
+        session_results: latest[:session_results],
+        robustness_result: latest[:robustness_result]
       }
 
       canonical = build_ranking_walk_forward(per)
@@ -119,6 +121,8 @@ module StrategyBuilder
         instrument: instrument,
         metrics: canonical[:aggregate],
         walk_forward: canonical,
+        session_results: merge_session_results(per),
+        robustness_result: merge_robustness_results(per),
         candle_count: per.values.sum { |v| v[:candle_count].to_i }
       }
     end
@@ -147,11 +151,45 @@ module StrategyBuilder
       return wfs.first if wfs.size <= 1
 
       aggregates = wfs.map { |wf| wf[:aggregate] }
+      regime_fracs = wfs.map { |wf| wf[:regime_slices] }.compact.filter_map do |rs|
+        rs[:fraction_positive_expectancy] if rs.is_a?(Hash)
+      end
+      regime_slices = if regime_fracs.empty?
+                         nil
+                       else
+                         {
+                           fraction_positive_expectancy: mean_or_zero(regime_fracs),
+                           merged: true
+                         }
+                       end
+
       {
         aggregate: merge_aggregate_rows(aggregates),
         stability_score: mean_or_zero(wfs.map { |wf| wf[:stability_score] }),
         passes_walk_forward: wfs.all? { |wf| wf[:passes_walk_forward] },
-        folds: wfs.flat_map { |wf| wf[:folds] || [] }
+        folds: wfs.flat_map { |wf| wf[:folds] || [] },
+        regime_slices: regime_slices
+      }
+    end
+
+    def merge_session_results(per_instrument)
+      per_instrument.each_with_object({}) do |(inst, data), acc|
+        next unless data[:session_results].is_a?(Hash)
+
+        data[:session_results].each do |session, metrics|
+          acc["#{inst}:#{session}"] = metrics
+        end
+      end
+    end
+
+    def merge_robustness_results(per_instrument)
+      scores = per_instrument.values.filter_map { |v| v.dig(:robustness_result, :robustness_score) }
+      return nil if scores.empty?
+
+      {
+        robustness_score: mean_or_zero(scores),
+        merged: true,
+        tested_params: per_instrument.values.map { |v| v.dig(:robustness_result, :tested_params) }.compact.sum
       }
     end
 

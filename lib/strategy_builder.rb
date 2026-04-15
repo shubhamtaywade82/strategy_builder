@@ -77,7 +77,9 @@ module StrategyBuilder
   autoload :ToolRegistry,       "strategy_builder/agent/tool_registry"
 
   # Signal generation (bridges strategy conditions to backtest signals)
-  autoload :SignalGeneratorFactory, "strategy_builder/backtest/signal_generator_factory"
+  autoload :EvaluationContext,  "strategy_builder/backtest/evaluation_context"
+  autoload :ConditionRegistry,  "strategy_builder/backtest/condition_registry"
+  autoload :SignalEvaluator,    "strategy_builder/backtest/signal_evaluator"
 
   # Configuration
   autoload :Configuration,      "strategy_builder/configuration"

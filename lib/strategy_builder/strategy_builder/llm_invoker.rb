@@ -17,12 +17,21 @@ module StrategyBuilder
       loop do
         attempts += 1
         begin
+          log_llm_inputs(
+            prompt: prompt,
+            system_prompt: PromptBuilder::SYSTEM_PROMPT,
+            context: {},
+            response_schema: response_schema
+          )
+
           raw = @planner.run(
             prompt: prompt,
             context: {},
             system_prompt: PromptBuilder::SYSTEM_PROMPT,
             schema: schema_for_llm
           )
+
+          log_llm_raw_output(raw)
 
           if raw.is_a?(Hash) || raw.is_a?(Array)
             return normalize_llm_candidate_list(raw)
@@ -70,6 +79,69 @@ module StrategyBuilder
     end
 
     private
+
+    def llm_io_log?
+      StrategyBuilder.configuration.llm_io_log
+    end
+
+    def llm_log_max_chars
+      [StrategyBuilder.configuration.llm_io_log_max_chars, 256].max
+    end
+
+    def truncate_llm_log_payload(text)
+      body = text.to_s
+      max = llm_log_max_chars
+      return body if body.bytesize <= max
+
+      suffix = "...(truncated, #{body.bytesize} bytes total)"
+      head = max - suffix.bytesize
+      head = 256 if head < 256
+      "#{body.byteslice(0, head)}#{suffix}"
+    end
+
+    def log_llm_inputs(prompt:, system_prompt:, context:, response_schema:)
+      return unless llm_io_log?
+
+      sys = system_prompt.to_s
+      usr = prompt.to_s
+      ctx = context.nil? || context.empty? ? "{}" : JSON.pretty_generate(context)
+      schema_note =
+        if response_schema.nil?
+          "schema=default_any_json"
+        else
+          "schema=custom (#{JSON.generate(response_schema).bytesize} bytes JSON)"
+        end
+
+      @logger.info { "LLM IO — system_prompt (#{sys.bytesize} bytes): #{truncate_llm_log_payload(sys)}" }
+      @logger.info { "LLM IO — user_prompt (#{usr.bytesize} bytes): #{truncate_llm_log_payload(usr)}" }
+      @logger.info { "LLM IO — context (#{ctx.bytesize} bytes): #{truncate_llm_log_payload(ctx)}" }
+      @logger.info { "LLM IO — #{schema_note}" }
+    end
+
+    def log_llm_raw_output(raw)
+      return unless llm_io_log?
+
+      preview =
+        case raw
+        when Hash, Array
+          truncate_llm_log_payload(JSON.pretty_generate(raw))
+        else
+          truncate_llm_log_payload(raw.inspect)
+        end
+
+      kind = raw.class.name
+      bytes =
+        case raw
+        when String
+          raw.bytesize
+        when Hash, Array
+          JSON.generate(raw).bytesize
+        else
+          raw.to_s.bytesize
+        end
+
+      @logger.info { "LLM IO — response (#{kind}, #{bytes} bytes): #{preview}" }
+    end
 
     def warn_retry(label, error, attempts, max_attempts)
       @logger.warn { "#{label} (attempt #{attempts}/#{max_attempts}): #{error.message}" }

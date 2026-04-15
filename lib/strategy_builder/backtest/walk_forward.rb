@@ -16,7 +16,7 @@ module StrategyBuilder
 
     # Run walk-forward analysis using non-overlapping contiguous folds (each fold is its own IS/OOS split).
     # Returns: { folds: [...], aggregate: {...}, stability_score: Float }
-    def run(strategy:, candles:, signal_generator:, folds: DEFAULT_FOLDS)
+    def run(strategy:, candles:, signal_generator:, folds: DEFAULT_FOLDS, mtf_candles: nil)
       fold_size = candles.size / folds
       raise BacktestError, "Insufficient data for #{folds} folds (#{candles.size} candles)" if fold_size < 100
 
@@ -37,12 +37,14 @@ module StrategyBuilder
         is_result = @engine.run(
           strategy: strategy,
           candles: in_sample,
+          mtf_candles: mtf_candles,
           signal_generator: signal_generator
         )
 
         oos_result = @engine.run(
           strategy: strategy,
           candles: out_of_sample,
+          mtf_candles: mtf_candles,
           signal_generator: signal_generator
         )
 
@@ -63,12 +65,12 @@ module StrategyBuilder
         folds: fold_results,
         aggregate: aggregate,
         stability_score: stability,
-        passes_walk_forward: stability > 0.5 && aggregate[:oos_expectancy] > 0
+        passes_walk_forward: stability > 0.5 && aggregate[:oos_expectancy].positive?
       }
     end
 
     # Run session-wise analysis: same strategy tested per session.
-    def session_analysis(strategy:, candles:, signal_generator:)
+    def session_analysis(strategy:, candles:, signal_generator:, mtf_candles: nil)
       session_groups = SessionDetector.group_by_session(candles)
 
       session_groups.each_with_object({}) do |(session, session_candles), result|
@@ -77,11 +79,68 @@ module StrategyBuilder
         bt = @engine.run(
           strategy: strategy,
           candles: session_candles,
+          mtf_candles: mtf_candles,
           signal_generator: signal_generator
         )
 
         result[session] = bt[:metrics]
       end
+    end
+
+    # Single anchored split: train on the first +train_ratio+ of the series, hold out the tail.
+    def anchored_holdout(strategy:, candles:, signal_generator:, train_ratio: 0.65, mtf_candles: nil)
+      warmup = StrategyBuilder.configuration.backtest_indicator_warmup
+      return nil if candles.size < warmup + 120
+
+      split = [(candles.size * train_ratio).to_i, candles.size - 80].min
+      return nil if split <= warmup || split >= candles.size - 20
+
+      train = candles[0...split]
+      test = candles[split..]
+
+      is_bt = @engine.run(strategy: strategy, candles: train, mtf_candles: mtf_candles, signal_generator: signal_generator)
+      oos_bt = @engine.run(strategy: strategy, candles: test, mtf_candles: mtf_candles, signal_generator: signal_generator)
+
+      {
+        train_ratio: train_ratio,
+        train_candles: train.size,
+        test_candles: test.size,
+        in_sample: is_bt[:metrics],
+        out_of_sample: oos_bt[:metrics]
+      }
+    end
+
+    # Sliding windows with per-window volatility regime label (complements fold walk-forward).
+    def volatility_regime_slices(strategy:, candles:, signal_generator:, chunk_size: 400, mtf_candles: nil)
+      warmup = StrategyBuilder.configuration.backtest_indicator_warmup
+      return { segments: [], fraction_positive_expectancy: 0.5 } if candles.size < chunk_size + warmup
+
+      segments = []
+      step = [chunk_size / 2, 100].max
+      i = 0
+      while i + chunk_size <= candles.size
+        slice = candles[i, chunk_size]
+        reg = VolatilityProfile.regime(slice)
+        res = @engine.run(
+          strategy: strategy,
+          candles: slice,
+          mtf_candles: mtf_candles,
+          signal_generator: signal_generator
+        )
+        exp = res[:metrics][:expectancy].to_f
+        segments << {
+          start_index: i,
+          regime: reg,
+          expectancy: exp,
+          trade_count: res[:metrics][:trade_count]
+        }
+        i += step
+      end
+
+      positive = segments.count { |s| s[:expectancy] > 0 }
+      frac = segments.empty? ? 0.5 : (positive.to_f / segments.size).round(4)
+
+      { segments: segments, fraction_positive_expectancy: frac }
     end
 
     private
@@ -121,7 +180,7 @@ module StrategyBuilder
       return 0.0 if oos_expectancies.empty?
 
       # Stability = fraction of folds with positive OOS expectancy.
-      positive_folds = oos_expectancies.count { |e| e > 0 }
+      positive_folds = oos_expectancies.count(&:positive?)
       base_stability = positive_folds.to_f / oos_expectancies.size
 
       # Penalize high variance across folds.

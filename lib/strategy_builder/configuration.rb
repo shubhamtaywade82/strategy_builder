@@ -6,7 +6,7 @@ module StrategyBuilder
 
     # First non-empty wins: OLLAMA_AGENT_MODEL (preferred), then OLLAMA_MODEL, then default.
     # The name must exist on your Ollama server (`ollama list`); unknown tags return HTTP 404.
-    DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
+    DEFAULT_OLLAMA_MODEL = "qwen3.5:4b"
 
     def self.ollama_model_from_env
       %w[OLLAMA_AGENT_MODEL OLLAMA_MODEL].each do |key|
@@ -19,6 +19,11 @@ module StrategyBuilder
     def self.truthy_env?(name)
       val = ENV[name]&.strip&.downcase
       %w[1 true yes on].include?(val)
+    end
+
+    def self.falsey_env?(name)
+      val = ENV[name]&.strip&.downcase
+      %w[0 false no off].include?(val)
     end
 
     def self.default_ollama_base_url(cloud)
@@ -37,8 +42,10 @@ module StrategyBuilder
                   :ollama_base_url, :ollama_num_ctx, :ollama_retries,
                   :ollama_llm_max_attempts, :ollama_llm_retry_base_seconds,
                   :ollama_api_key,
+                  :llm_io_log, :llm_io_log_max_chars,
                   :default_instruments, :default_timeframes,
                   :backtest_fee_rate, :backtest_slippage_bps,
+                  :backtest_spread_bps, :backtest_slippage_volatility_scale,
                   :walk_forward_in_sample_ratio,
                   :max_strategy_candidates, :max_agent_iterations,
                   :output_dir, :logger,
@@ -67,12 +74,17 @@ module StrategyBuilder
       @ollama_retries = Integer(ENV.fetch("OLLAMA_CLIENT_RETRIES", "2"))
       @ollama_llm_max_attempts = Integer(ENV.fetch("STRATEGY_BUILDER_OLLAMA_LLM_ATTEMPTS", "5"))
       @ollama_llm_retry_base_seconds = Float(ENV.fetch("STRATEGY_BUILDER_OLLAMA_RETRY_BASE", "0.75"))
+      # Log prompts and raw model output (truncated). Disable with STRATEGY_BUILDER_LLM_IO_LOG=0.
+      @llm_io_log = !self.class.falsey_env?("STRATEGY_BUILDER_LLM_IO_LOG")
+      @llm_io_log_max_chars = Integer(ENV.fetch("STRATEGY_BUILDER_LLM_IO_LOG_MAX_CHARS", "16000"))
 
       @default_instruments = %w[B-BTC_USDT B-ETH_USDT B-SOL_USDT]
       @default_timeframes = %w[1m 5m 15m 1h 4h]
 
       @backtest_fee_rate = 0.0005       # 5 bps maker
       @backtest_slippage_bps = 2.0      # 2 bps simulated slippage
+      @backtest_spread_bps = Float(ENV.fetch("STRATEGY_BUILDER_SPREAD_BPS", "1.0"))
+      @backtest_slippage_volatility_scale = self.class.truthy_env?("STRATEGY_BUILDER_VOL_SLIPPAGE")
       @walk_forward_in_sample_ratio = 0.7
 
       @max_strategy_candidates = 50
@@ -80,7 +92,7 @@ module StrategyBuilder
 
       # AgentLoop: max concurrent CoinDCX fetches (bounded to avoid rate-limit / thundering herd).
       @parallel_instrument_max = Integer(ENV.fetch("STRATEGY_BUILDER_PARALLEL_INSTRUMENTS", "6"))
-      # BacktestEngine / SignalGeneratorFactory: candles required before signals (indicator warmup).
+      # BacktestEngine / SignalEvaluator: candles required before signals (indicator warmup).
       @backtest_indicator_warmup = Integer(ENV.fetch("STRATEGY_BUILDER_BACKTEST_WARMUP", "50"))
       # When strategy/signal does not specify stop distance, use this fraction of last close.
       @backtest_default_stop_price_fraction = Float(ENV.fetch("STRATEGY_BUILDER_DEFAULT_STOP_FRAC", "0.01"))

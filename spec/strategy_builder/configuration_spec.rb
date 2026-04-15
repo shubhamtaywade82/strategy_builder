@@ -53,6 +53,38 @@ RSpec.describe StrategyBuilder::Configuration do
     end
   end
 
+  describe ".falsey_env?" do
+    it "treats 0, false, no, off as true (flag is falsey)" do
+      %w[0 false no off].each do |v|
+        ENV["SB_TEST_FALSEY"] = v
+        expect(described_class.falsey_env?("SB_TEST_FALSEY")).to be(true), "expected #{v.inspect} to be falsey"
+      end
+    end
+
+    it "treats unset as not falsey" do
+      ENV.delete("SB_TEST_FALSEY")
+      expect(described_class.falsey_env?("SB_TEST_FALSEY")).to be(false)
+    end
+  end
+
+  describe "LLM IO logging" do
+    around do |example|
+      saved = %w[STRATEGY_BUILDER_LLM_IO_LOG STRATEGY_BUILDER_LLM_IO_LOG_MAX_CHARS].to_h { |k| [k, ENV[k]] }
+      %w[STRATEGY_BUILDER_LLM_IO_LOG STRATEGY_BUILDER_LLM_IO_LOG_MAX_CHARS].each { |k| ENV.delete(k) }
+      example.run
+      saved.each { |k, v| v ? ENV[k] = v : ENV.delete(k) }
+    end
+
+    it "enables llm_io_log by default" do
+      expect(described_class.new.llm_io_log).to be(true)
+    end
+
+    it "disables llm_io_log when STRATEGY_BUILDER_LLM_IO_LOG is falsey" do
+      ENV["STRATEGY_BUILDER_LLM_IO_LOG"] = "0"
+      expect(described_class.new.llm_io_log).to be(false)
+    end
+  end
+
   describe ".default_ollama_base_url" do
     around do |example|
       saved = ENV["OLLAMA_BASE_URL"]

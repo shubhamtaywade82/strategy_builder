@@ -48,5 +48,28 @@ RSpec.describe StrategyBuilder::CandleLoader do
       expect(candles.first[:open]).to eq(10.0)
       expect(candles.first[:close]).to eq(10.5)
     end
+
+    it "converts millisecond Unix timestamps from the API to seconds" do
+      ms = 1_774_000_000_000
+      expected_seconds = 1_774_000_000
+      row = {
+        "time" => ms,
+        "open" => "1",
+        "high" => "2",
+        "low" => "0.5",
+        "close" => "1.5",
+        "volume" => "100"
+      }
+      allow(market_data).to receive(:list_candlesticks).and_return([row])
+
+      candles = loader.fetch(
+        instrument: "B-BTC_USDT",
+        timeframe: "1m",
+        from: expected_seconds,
+        to: expected_seconds + 120
+      )
+
+      expect(candles.first[:timestamp]).to eq(expected_seconds)
+    end
   end
 end

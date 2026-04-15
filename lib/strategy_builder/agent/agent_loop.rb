@@ -93,18 +93,45 @@ module StrategyBuilder
       end
     end
 
-    # Run the full research pipeline.
-    # query: what the agent should investigate (e.g., "Find breakout strategies for BTC on 5m/15m")
-    # Returns: { steps: [...], final_result: ..., strategies_found: Int }
+    # Run the full research pipeline (deterministic Ruby phases only).
+    # query: logged for traceability; the catalog outcome is the source of truth.
+    # Returns: { steps: [...], final_result: nil, strategies_found: Int, passing_strategies: Int }
     def run(query:)
-      @logger.info { "Agent starting: #{query}" }
-      result, steps = run_with_executor(executor: build_executor, query: query)
+      @logger.info { "Agent starting (deterministic pipeline): #{query}" }
+      catalog = @catalog_factory.call
+      steps = run_manual_pipeline(query)
+      {
+        steps: steps,
+        final_result: nil,
+        strategies_found: catalog.size,
+        passing_strategies: catalog.passing.size
+      }
+    end
+
+    # Optional: LLM tool-calling loop against CoinDCX + catalog tools (proposal/orchestration only).
+    # Does not merge results into the deterministic pipeline; use for interactive research.
+    def run_with_llm_tools(query:)
+      @logger.info { "Agent LLM tool loop: #{query}" }
+      executor = build_executor
+      raise StrategyBuilder::Error, "Ollama::Agent::Executor not available" if executor.nil?
+
+      steps = []
+      result = executor.run(system: AGENT_SYSTEM_PROMPT, user: build_initial_prompt(query))
+      steps << { type: :executor_result, content: result }
       catalog = @catalog_factory.call
       {
         steps: steps,
         final_result: result,
         strategies_found: catalog.size,
         passing_strategies: catalog.passing.size
+      }
+    rescue Ollama::Error => e
+      @logger.error { "Executor error: #{e.message}" }
+      {
+        steps: [{ type: :error, content: e.message }],
+        final_result: nil,
+        strategies_found: 0,
+        passing_strategies: 0
       }
     end
 
@@ -189,7 +216,11 @@ module StrategyBuilder
         gate_result = Gatekeeper.evaluate(walk_forward_result: wf_result)
 
         # Score
-        score_result = Scorer.score(walk_forward_result: wf_result)
+        score_result = Scorer.score(
+          walk_forward_result: wf_result,
+          session_results: entry.dig(:backtest_results, :session_results),
+          robustness_result: entry.dig(:backtest_results, :robustness_result)
+        )
 
         ranking = score_result.merge(gate_result)
         catalog.attach_ranking(entry[:id], ranking)
@@ -227,40 +258,10 @@ module StrategyBuilder
 
     private
 
-    # Returns [final_result, steps] where final_result is nil when manual pipeline ran alone or after Ollama::Error.
-    def run_with_executor(executor:, query:)
-      steps = []
-      return run_without_executor_tooling(query, steps) if executor.nil?
-
-      run_executor_tool_loop(executor, query, steps)
-    end
-
     def proposal_dedupe_key(candidate)
       base_name = candidate[:name].to_s.sub(/\s*\(offline template\)\s*\z/i, "").strip.downcase
       family = candidate[:family].to_s.downcase
       "#{family}:#{base_name}"
-    end
-
-    def run_without_executor_tooling(query, steps)
-      @logger.warn { 'Ollama::Agent::Executor unavailable; running manual pipeline' }
-      steps << { type: :executor_unavailable, content: 'manual_pipeline' }
-      steps.concat(run_manual_pipeline(query))
-      [nil, steps]
-    end
-
-    def run_executor_tool_loop(executor, query, steps)
-      result = executor.run(system: AGENT_SYSTEM_PROMPT, user: build_initial_prompt(query))
-      steps << { type: :executor_result, content: result }
-      [result, steps]
-    rescue Ollama::Error => e
-      executor_failed_fallback(e, query, steps)
-    end
-
-    def executor_failed_fallback(error, query, steps)
-      @logger.error { "Executor error: #{error.message}" }
-      steps << { type: :error, content: error.message }
-      steps.concat(run_manual_pipeline(query))
-      [nil, steps]
     end
 
     def build_executor
@@ -271,7 +272,7 @@ module StrategyBuilder
 
       Ollama::Agent::Executor.new(@client, tools: tools)
     rescue NameError => e
-      @logger.warn { "Ollama::Agent::Executor not available: #{e.message}. Using manual pipeline." }
+      @logger.warn { "Ollama::Agent::Executor not available: #{e.message}" }
       nil
     end
 

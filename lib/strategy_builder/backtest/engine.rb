@@ -41,7 +41,7 @@ module StrategyBuilder
     # signal_generator: a callable that receives (candles_prefix, strategy) -> signal or nil
     # (candles_prefix is the same Array instance, grown by one candle per bar — no per-bar slice allocation).
     # Returns: { trades: [...], metrics: {...} }
-    def run(strategy:, candles:, mtf_candles: nil, signal_generator:)
+    def run(strategy:, candles:, signal_generator:, mtf_candles: nil)
       trades = []
       position = nil
       position_counter = 0
@@ -54,33 +54,39 @@ module StrategyBuilder
 
         # If in position, check exits first
         if position && BacktestPositionState.active?(position)
-          exit_result = check_exits(position, candle, i, strategy)
+          exit_result = check_exits(position, candle, i, strategy, candles_prefix)
           if exit_result
-            trade = close_position(position, exit_result, candle, i)
+            trade = close_position(position, exit_result, candle, i, candles_prefix)
             trades << trade
             position = nil
-          else
+          elsif position.trail_config
             # Update trailing stop
-            position = @trailing_model.update(position, candle) if position.trail_config
+            position = @trailing_model.update(position, candle)
           end
         end
 
         # If no position, check for entry signals
         next if position
 
-        signal = signal_generator.call(candles_prefix, strategy)
+        signal = signal_generator.call(candles_prefix, strategy, mtf_candles)
         next unless signal
 
         # Apply filters
         next unless passes_filters?(signal, candles_prefix, strategy)
 
         position_counter += 1
-        position = open_position(signal, candle, i, position_counter, strategy)
+        position = open_position(signal, candle, i, position_counter, strategy, candles_prefix)
       end
 
       # Force-close any open position at end
       if position && BacktestPositionState.active?(position)
-        trade = close_position(position, { reason: :end_of_data, price: candles.last[:close] }, candles.last, candles.size - 1)
+        trade = close_position(
+          position,
+          { reason: :end_of_data, price: candles.last[:close] },
+          candles.last,
+          candles.size - 1,
+          candles_prefix
+        )
         trades << trade
       end
 
@@ -90,10 +96,10 @@ module StrategyBuilder
 
     private
 
-    def open_position(signal, candle, index, counter, strategy)
+    def open_position(signal, candle, index, counter, strategy, candles_prefix)
       direction = signal[:direction] || :long
       raw_entry = signal[:entry_price] || candle[:close]
-      entry_price = @slippage_model.apply(raw_entry, direction, candle)
+      entry_price = @slippage_model.apply(raw_entry, direction, candle, candles_so_far: candles_prefix)
       entry_fee = @fee_model.calculate(entry_price, signal[:size] || 1.0)
 
       stop_distance = compute_stop_distance(strategy, candle, signal)
@@ -123,7 +129,7 @@ module StrategyBuilder
       )
     end
 
-    def check_exits(position, candle, index, strategy)
+    def check_exits(position, candle, index, strategy, candles_prefix)
       BacktestPositionState.ensure_active_for_exits!(position)
 
       # 1. Stop loss hit
@@ -137,7 +143,7 @@ module StrategyBuilder
         return { reason: :target_hit, price: target_result[:price] }
       elsif target_result
         # Partial exit — update position but don't close
-        apply_partial_exit(position, target_result, candle)
+        apply_partial_exit(position, target_result, candle, candles_prefix)
         return nil
       end
 
@@ -161,11 +167,16 @@ module StrategyBuilder
       end
     end
 
-    def apply_partial_exit(position, result, candle)
+    def apply_partial_exit(position, result, candle, candles_prefix)
       # Fractions are shares of original position.size (e.g. 0.33/0.33/0.34), not of remaining_size.
       exit_size = (position.size * result[:fraction])
       exit_size = [exit_size, position.remaining_size].min
-      exit_price = @slippage_model.apply(result[:price], reverse_direction(position.direction), candle)
+      exit_price = @slippage_model.apply(
+        result[:price],
+        reverse_direction(position.direction),
+        candle,
+        candles_so_far: candles_prefix
+      )
       fee = @fee_model.calculate(exit_price, exit_size)
 
       pnl = if position.direction == :long
@@ -179,9 +190,14 @@ module StrategyBuilder
       position.fills << { price: exit_price, fee: fee, size: exit_size, type: :partial_exit }
     end
 
-    def close_position(position, exit_result, candle, index)
+    def close_position(position, exit_result, candle, index, candles_prefix)
       raw_exit = exit_result[:price]
-      exit_price = @slippage_model.apply(raw_exit, reverse_direction(position.direction), candle)
+      exit_price = @slippage_model.apply(
+        raw_exit,
+        reverse_direction(position.direction),
+        candle,
+        candles_so_far: candles_prefix
+      )
       exit_fee = @fee_model.calculate(exit_price, position.remaining_size)
 
       final_pnl = if position.direction == :long
@@ -214,16 +230,12 @@ module StrategyBuilder
       )
     end
 
-    def compute_stop_distance(strategy, candle, signal)
+    def compute_stop_distance(_strategy, candle, signal)
       # Default: use ATR-based stop if no explicit distance
-      if signal[:stop_distance]
-        signal[:stop_distance]
-      else
-        candle[:close] * StrategyBuilder.configuration.backtest_default_stop_price_fraction
-      end
+      signal[:stop_distance] || candle[:close] * StrategyBuilder.configuration.backtest_default_stop_price_fraction
     end
 
-    def passes_filters?(signal, candles, strategy)
+    def passes_filters?(_signal, candles, strategy)
       filters = strategy[:filters] || {}
 
       if filters[:min_volume_zscore]

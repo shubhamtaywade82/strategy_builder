@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe StrategyBuilder::SignalGeneratorFactory do
+RSpec.describe StrategyBuilder::SignalEvaluator do
   let(:candles) { TestData.candle_series(count: 300) }
 
   describe ".build" do
@@ -10,6 +10,13 @@ RSpec.describe StrategyBuilder::SignalGeneratorFactory do
       strategy = TestData.strategy_candidate
       signal_gen = described_class.build(strategy)
       expect(signal_gen).to respond_to(:call)
+    end
+
+    it "raises when entry conditions include unknown names" do
+      strategy = TestData.strategy_candidate.merge(
+        entry: { conditions: %w[asia_range_defined not_a_real_condition] }
+      )
+      expect { described_class.build(strategy) }.to raise_error(StrategyBuilder::ValidationError, /not_a_real_condition/)
     end
 
     it "returns nil for insufficient warmup data" do
@@ -21,18 +28,16 @@ RSpec.describe StrategyBuilder::SignalGeneratorFactory do
     end
   end
 
-  describe "session_breakout evaluator" do
+  describe "condition evaluation via registry" do
     let(:strategy) do
       TestData.strategy_candidate.merge(
-        family: "session_breakout",
-        entry: { conditions: %w[session_high_break] }
+        entry: { conditions: %w[asia_range_defined session_high_break volume_confirmation] }
       )
     end
 
     it "produces a signal hash when conditions align" do
       signal_gen = described_class.build(strategy)
 
-      # Run across all candles until a signal appears (or doesn't)
       signals_found = 0
       candles.each_with_index do |_c, i|
         next if i < 50
@@ -47,75 +52,19 @@ RSpec.describe StrategyBuilder::SignalGeneratorFactory do
           break
         end
       end
-
-      # It's acceptable if no signal fires on random data — the test validates structure when one does
-    end
-  end
-
-  describe "mtf_pullback evaluator" do
-    let(:strategy) do
-      TestData.strategy_candidate.merge(
-        family: "mtf_pullback",
-        entry: { conditions: %w[higher_tf_trend_bullish lower_tf_pullback_to_ema] }
-      )
-    end
-
-    it "builds without error" do
-      signal_gen = described_class.build(strategy)
-      expect(signal_gen).to respond_to(:call)
-    end
-  end
-
-  describe "compression_breakout evaluator" do
-    let(:strategy) do
-      TestData.strategy_candidate.merge(
-        family: "compression_breakout",
-        entry: { conditions: %w[compression_detected range_break] }
-      )
-    end
-
-    it "builds without error" do
-      signal_gen = described_class.build(strategy)
-      expect(signal_gen).to respond_to(:call)
-    end
-  end
-
-  describe "failed_breakout evaluator" do
-    let(:strategy) do
-      TestData.strategy_candidate.merge(
-        family: "failed_breakout",
-        entry: { conditions: %w[breakout_attempt retest_below_level] }
-      )
-    end
-
-    it "builds without error" do
-      signal_gen = described_class.build(strategy)
-      expect(signal_gen).to respond_to(:call)
-    end
-  end
-
-  describe "vwap_reclaim evaluator" do
-    let(:strategy) do
-      TestData.strategy_candidate.merge(
-        family: "vwap_reclaim",
-        entry: { conditions: %w[price_reclaims_vwap structure_bullish_shift] }
-      )
-    end
-
-    it "builds without error" do
-      signal_gen = described_class.build(strategy)
-      expect(signal_gen).to respond_to(:call)
     end
   end
 
   describe ".passes_filters?" do
+    let(:ctx) { StrategyBuilder::EvaluationContext.new(candles, TestData.strategy_candidate) }
+
     it "passes when no filters are set" do
-      expect(described_class.passes_filters?(candles, {})).to be true
+      expect(described_class.passes_filters?(ctx, {})).to be true
     end
 
     it "rejects when volume zscore is below minimum" do
       filters = { min_volume_zscore: 100.0 } # unreachably high
-      expect(described_class.passes_filters?(candles, filters)).to be false
+      expect(described_class.passes_filters?(ctx, filters)).to be false
     end
   end
 
@@ -131,8 +80,8 @@ RSpec.describe StrategyBuilder::SignalGeneratorFactory do
     end
   end
 
-  describe "integration: backtest engine + signal generator factory" do
-    it "runs a full backtest with factory-generated signals" do
+  describe "integration: backtest engine + signal evaluator" do
+    it "runs a full backtest with evaluator-generated signals" do
       strategy = TestData.strategy_candidate
       signal_gen = described_class.build(strategy)
       engine = StrategyBuilder::BacktestEngine.new
@@ -145,6 +94,22 @@ RSpec.describe StrategyBuilder::SignalGeneratorFactory do
 
       expect(result).to include(:trades, :metrics)
       expect(result[:metrics][:trade_count]).to be >= 0
+    end
+  end
+end
+
+RSpec.describe StrategyBuilder::ConditionRegistry do
+  let(:candles) { TestData.candle_series(count: 300) }
+  let(:ctx) { StrategyBuilder::EvaluationContext.new(candles, {}) }
+
+  describe ".evaluate" do
+    it "evaluates an existing condition safely" do
+      expect([true, false]).to include(described_class.evaluate("asia_range_defined", ctx))
+    end
+
+    it "returns false for unknown conditions and logs a warning" do
+      expect(StrategyBuilder.logger).to receive(:warn).with(any_args)
+      expect(described_class.evaluate("unknown_magic_condition", ctx)).to be false
     end
   end
 end

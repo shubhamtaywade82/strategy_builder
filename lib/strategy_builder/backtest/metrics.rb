@@ -9,7 +9,7 @@ module StrategyBuilder
 
       pnls = trades.map(&:pnl)
       r_multiples = trades.map(&:pnl_r).compact
-      winners = trades.select { |t| t.pnl > 0 }
+      winners = trades.select { |t| t.pnl.positive? }
       losers = trades.select { |t| t.pnl <= 0 }
 
       {

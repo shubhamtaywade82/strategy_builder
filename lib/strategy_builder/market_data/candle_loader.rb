@@ -16,6 +16,8 @@ module StrategyBuilder
     }.freeze
 
     MAX_CANDLES_PER_REQUEST = 500
+    # Values above this are treated as milliseconds (CoinDCX) and converted to Unix seconds.
+    MAX_UNIX_SECONDS_SANE = 10_000_000_000
 
     def initialize(client: StrategyBuilder.coindcx_client)
       @client = client
@@ -104,7 +106,7 @@ module StrategyBuilder
 
     def normalize_candle(raw, timeframe)
       {
-        timestamp: raw["time"] || raw["t"] || raw[:time] || raw[:t],
+        timestamp: normalize_candle_timestamp(raw["time"] || raw["t"] || raw[:time] || raw[:t]),
         open:      (raw["open"] || raw["o"] || raw[:open] || raw[:o]).to_f,
         high:      (raw["high"] || raw["h"] || raw[:high] || raw[:h]).to_f,
         low:       (raw["low"]  || raw["l"] || raw[:low]  || raw[:l]).to_f,
@@ -112,6 +114,17 @@ module StrategyBuilder
         volume:    (raw["volume"] || raw["v"] || raw[:volume] || raw[:v]).to_f,
         timeframe: timeframe
       }
+    end
+
+    def normalize_candle_timestamp(value)
+      return value.to_i if value.is_a?(Time)
+
+      i = Integer(value)
+      # Collapse ms (or rarer sub-second encodings) into seconds for Time.at / session day keys.
+      3.times { break if i <= MAX_UNIX_SECONDS_SANE; i /= 1000 }
+      i
+    rescue ArgumentError, TypeError
+      raise DataError, "Invalid candle timestamp: #{value.inspect}"
     end
 
     def deduplicate(candles)

@@ -121,14 +121,17 @@ module StrategyBuilder
           raise Error, "Strategy not found: #{args['strategy_id']}" unless entry
 
           strategy = entry[:strategy]
-          signal_gen = SignalGeneratorFactory.build(strategy)
-
           loader = CandleLoader.new
           from = Time.now - (args["days_back"] * 86_400)
-          primary_tf = strategy[:timeframes]&.last || "5m"
-          candles = loader.fetch(instrument: args["instrument"], timeframe: primary_tf, from: from)
+          tf = strategy[:timeframes]
+          timeframes = (tf.is_a?(Array) && !tf.empty?) ? tf : StrategyBuilder.configuration.default_timeframes
+          primary_tf = timeframes.last || "5m"
+          mtf = loader.fetch_mtf(instrument: args["instrument"], timeframes: timeframes, from: from)
+          candles = mtf[primary_tf] || []
 
           raise Error, "Insufficient data: #{candles.size} candles" if candles.size < 200
+
+          signal_gen = SignalEvaluator.build(strategy, mtf_candles: mtf)
 
           engine = BacktestEngine.new
           wf = WalkForward.new(engine: engine)
@@ -136,12 +139,45 @@ module StrategyBuilder
             strategy: strategy,
             candles: candles,
             signal_generator: signal_gen,
-            folds: args["folds"] || 5
+            folds: args["folds"] || 5,
+            mtf_candles: mtf
+          )
+
+          wf_result[:regime_slices] = wf.volatility_regime_slices(
+            strategy: strategy,
+            candles: candles,
+            signal_generator: signal_gen,
+            mtf_candles: mtf
+          )
+          wf_result[:anchored_holdout] = wf.anchored_holdout(
+            strategy: strategy,
+            candles: candles,
+            signal_generator: signal_gen,
+            mtf_candles: mtf
+          )
+
+          session_results = wf.session_analysis(
+            strategy: strategy,
+            candles: candles,
+            signal_generator: signal_gen,
+            mtf_candles: mtf
+          )
+
+          robustness_result = StrategyBuilder::Robustness.analyze(
+            strategy: strategy,
+            candles: candles,
+            engine: engine,
+            mtf_candles: mtf,
+            signal_generator_factory: lambda { |mutated|
+              SignalEvaluator.build(mutated, mtf_candles: mtf)
+            }
           )
 
           catalog.attach_backtest(entry[:id], {
             metrics: wf_result[:aggregate],
             walk_forward: wf_result,
+            session_results: session_results,
+            robustness_result: robustness_result,
             instrument: args["instrument"],
             candle_count: candles.size
           })
@@ -169,7 +205,13 @@ module StrategyBuilder
             next unless wf_result
 
             gate_result = Gatekeeper.evaluate(walk_forward_result: wf_result)
-            score_result = Scorer.score(walk_forward_result: wf_result)
+            session_results = entry.dig(:backtest_results, :session_results)
+            robustness_result = entry.dig(:backtest_results, :robustness_result)
+            score_result = Scorer.score(
+              walk_forward_result: wf_result,
+              session_results: session_results,
+              robustness_result: robustness_result
+            )
             catalog.attach_ranking(entry[:id], score_result.merge(gate_result))
           end
 

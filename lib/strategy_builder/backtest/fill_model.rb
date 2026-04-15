@@ -2,27 +2,43 @@
 
 module StrategyBuilder
   class FillModel
-    # Simulates order fills. For backtesting, assumes immediate fill at specified price.
-    # Production extension: model partial fills, queue position, etc.
-    def fill(price, size, candle)
+    # Immediate full fill at the simulated price produced by SlippageModel (+ spread).
+    # Partial fills / queue depth are not modeled; reserved for a future execution simulator.
+    def fill(price, size, _candle)
       { filled_price: price, filled_size: size, partial: false }
     end
   end
 
   class SlippageModel
-    def initialize(slippage_bps: nil)
-      @slippage_bps = slippage_bps || StrategyBuilder.configuration.backtest_slippage_bps
+    def initialize(slippage_bps: nil, spread_bps: nil, volatility_scaled: nil)
+      cfg = StrategyBuilder.configuration
+      @slippage_bps = slippage_bps || cfg.backtest_slippage_bps
+      @spread_bps = spread_bps || cfg.backtest_spread_bps
+      @volatility_scaled = volatility_scaled.nil? ? cfg.backtest_slippage_volatility_scale : volatility_scaled
     end
 
-    # Apply slippage to a fill price.
-    # Buys slip up, sells slip down (adverse fill).
-    def apply(price, direction, candle)
-      slip = price * (@slippage_bps / 10_000.0)
+    # Adverse execution price: slippage + half-spread per side (mid proxy = +raw+).
+    # +direction+ is position side: :long entry buys; :short entry sells; exits use reverse_direction.
+    def apply(price, direction, candle, candles_so_far: nil)
+      slip = adverse_slippage_amount(price, direction, candle, candles_so_far)
+      half_spread = price * (@spread_bps / 10_000.0) / 2.0
       case direction
-      when :long  then price + slip
-      when :short then price - slip
+      when :long  then price + slip + half_spread
+      when :short then price - slip - half_spread
       else price
       end
+    end
+
+    private
+
+    def adverse_slippage_amount(price, _direction, _candle, candles_so_far)
+      base = price * (@slippage_bps / 10_000.0)
+      mult = 1.0
+      if @volatility_scaled && candles_so_far.is_a?(Array) && candles_so_far.size > 25
+        atrp = VolatilityProfile.atr_percent(candles_so_far).compact.last
+        mult += [[atrp.to_f / 2.0, 0.0].max, 2.5].min if atrp
+      end
+      base * mult
     end
   end
 
@@ -69,7 +85,7 @@ module StrategyBuilder
         is_full = remaining_targets.empty? || (position.remaining_size - exit_leg_size) <= 1e-9
 
         # Shift stop to breakeven after first target
-        if i == 0 && !position.be_shifted
+        if i.zero? && !position.be_shifted
           position.current_trail_stop = position.entry_price
           position.be_shifted = true
         end
@@ -90,10 +106,10 @@ module StrategyBuilder
 
       case trail_config
       when /^atr_(\d+)_(\d+)/
-        atr_multiplier = "#{$1}.#{$2}".to_f
+        atr_multiplier = "#{::Regexp.last_match(1)}.#{::Regexp.last_match(2)}".to_f
         update_atr_trail(position, candle, atr_multiplier)
       when /^percent_(\d+)/
-        percent = $1.to_f / 100.0
+        percent = ::Regexp.last_match(1).to_f / 100.0
         update_percent_trail(position, candle, percent)
       else
         position # unknown trail config, no-op
