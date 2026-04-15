@@ -57,6 +57,22 @@ module StrategyBuilder
       @memo[:volume_zscore] ||= VolumeProfile.volume_zscore(candles).compact.last || 0.0
     end
 
+    def current_sessions
+      @memo[:current_sessions] ||= SessionDetector.tag_candles([@current_candle]).first[:sessions]
+    end
+
+    def asia_box
+      @memo[:asia_box] ||= SessionDetector.session_box(candles, 'asia')
+    end
+
+    def london_box
+      @memo[:london_box] ||= SessionDetector.session_box(candles, 'london')
+    end
+
+    def ny_box
+      @memo[:ny_box] ||= SessionDetector.session_box(candles, 'new_york')
+    end
+
     def ema(period: 20)
       @memo[:"ema_#{period}"] ||= MomentumEngine.ema(candles.map { |c| c[:close] }, period: period).compact
     end

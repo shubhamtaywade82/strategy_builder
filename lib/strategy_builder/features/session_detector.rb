@@ -5,12 +5,12 @@ module StrategyBuilder
     # Session windows in UTC.
     # Crypto trades 24/7 but institutional activity clusters in these windows.
     SESSIONS = {
-      "asia"           => { start_hour: 0,  end_hour: 8  },
-      "london"         => { start_hour: 7,  end_hour: 16 },
-      "new_york"       => { start_hour: 13, end_hour: 22 },
-      "asia_london"    => { start_hour: 7,  end_hour: 8  }, # overlap
-      "london_ny"      => { start_hour: 13, end_hour: 16 }, # overlap
-      "off_hours"      => { start_hour: 22, end_hour: 0  }
+      'asia' => { start_hour: 0, end_hour: 8 },
+      'london' => { start_hour: 7, end_hour: 16 },
+      'new_york' => { start_hour: 13, end_hour: 22 },
+      'asia_london' => { start_hour: 7, end_hour: 8 }, # overlap
+      'london_ny' => { start_hour: 13, end_hour: 16 }, # overlap
+      'off_hours' => { start_hour: 22, end_hour: 0  }
     }.freeze
 
     # Tag each candle with its session(s).
@@ -93,24 +93,58 @@ module StrategyBuilder
       end
     end
 
-    # Asia session high/low for the UTC day of +reference_candle+, using only history in +candles+ (prefix-safe).
-    # Returns { high:, low:, candle_count: } or nil when the range is not yet meaningful.
-    def self.asia_session_box(candles, reference_candle, min_candles: 3, min_range_atr_fraction: 0.02)
-      return nil if candles.nil? || candles.empty? || reference_candle.nil?
+    # Find the most recent block of candles for a given session.
+    # If completed_only: true, skips the currently active session and finds the previous one.
+    def self.session_box(candles, session_name, completed_only: false, min_candles: 1)
+      return nil if candles.nil? || candles.empty?
 
-      asia = candles_for_session_on_day(candles, session: "asia", reference_candle: reference_candle)
-      return nil if asia.size < min_candles
+      tagged = tag_candles(candles)
 
-      high = asia.map { |c| c[:high] }.max
-      low = asia.map { |c| c[:low] }.min
+      session_candles = []
+      in_session_block = false
+      found_non_session = false
+
+      # Work backwards to find the block
+      tagged.reverse_each do |c|
+        in_session = c[:sessions].include?(session_name)
+
+        if completed_only && !found_non_session
+          next if in_session
+
+          # Skip currently active session candles
+
+          found_non_session = true
+
+        end
+
+        if in_session
+          in_session_block = true
+          session_candles.unshift(c)
+        elsif in_session_block
+          break # Exited the target session block
+        end
+      end
+
+      return nil if session_candles.size < min_candles
+
+      high = session_candles.map { |c| c[:high] }.max
+      low = session_candles.map { |c| c[:low] }.min
       range = high - low
       return nil if range <= 1e-12
 
-      atr = VolatilityProfile.atr(candles).compact.last
-      atr ||= range
-      return nil if range < atr * min_range_atr_fraction
+      { high: high, low: low, candle_count: session_candles.size, range: range }
+    end
 
-      { high: high, low: low, candle_count: asia.size }
+    # Backwards compatibility and ATR filtering for Asia box
+    def self.asia_session_box(candles, _reference_candle = nil, min_candles: 3, min_range_atr_fraction: 0.02)
+      box = session_box(candles, 'asia', completed_only: false, min_candles: min_candles)
+      return nil unless box
+
+      atr = VolatilityProfile.atr(candles).compact.last
+      atr ||= box[:range]
+      return nil if box[:range] < atr * min_range_atr_fraction
+
+      box
     end
   end
 end

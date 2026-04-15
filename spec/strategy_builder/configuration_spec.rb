@@ -67,6 +67,44 @@ RSpec.describe StrategyBuilder::Configuration do
     end
   end
 
+  describe "#ollama_bearer_transport?" do
+    around do |example|
+      saved = %w[STRATEGY_BUILDER_OLLAMA_CLOUD OLLAMA_API_KEY OLLAMA_BASE_URL].to_h { |k| [k, ENV[k]] }
+      %w[STRATEGY_BUILDER_OLLAMA_CLOUD OLLAMA_API_KEY OLLAMA_BASE_URL].each { |k| ENV.delete(k) }
+      example.run
+      saved.each { |k, v| v ? ENV[k] = v : ENV.delete(k) }
+    end
+
+    it "is true when STRATEGY_BUILDER_OLLAMA_CLOUD=1" do
+      ENV["STRATEGY_BUILDER_OLLAMA_CLOUD"] = "1"
+      ENV["OLLAMA_API_KEY"] = "k"
+      cfg = described_class.new
+      cfg.ollama_base_url = "https://ollama.com"
+      expect(cfg.ollama_bearer_transport?).to be(true)
+    end
+
+    it "is true for https://ollama.com when OLLAMA_API_KEY is set even without cloud flag" do
+      ENV["OLLAMA_API_KEY"] = "secret"
+      cfg = described_class.new
+      cfg.ollama_base_url = "https://ollama.com"
+      expect(cfg.ollama_bearer_transport?).to be(true)
+    end
+
+    it "is false for https://ollama.com without an API key" do
+      ENV.delete("OLLAMA_API_KEY")
+      cfg = described_class.new
+      cfg.ollama_base_url = "https://ollama.com"
+      expect(cfg.ollama_bearer_transport?).to be(false)
+    end
+
+    it "is false for local Ollama even with an API key" do
+      ENV["OLLAMA_API_KEY"] = "unused"
+      cfg = described_class.new
+      cfg.ollama_base_url = "http://127.0.0.1:11434"
+      expect(cfg.ollama_bearer_transport?).to be(false)
+    end
+  end
+
   describe "LLM IO logging" do
     around do |example|
       saved = %w[STRATEGY_BUILDER_LLM_IO_LOG STRATEGY_BUILDER_LLM_IO_LOG_MAX_CHARS].to_h { |k| [k, ENV[k]] }

@@ -31,32 +31,41 @@ module StrategyBuilder
     end
 
     def self.load_defaults!
-      # 1. Session Breakout — Asia box (UTC) from SessionDetector, prefix-safe.
+      # 1. Session Breakout
       register('asia_range_defined') do |ctx|
-        box = SessionDetector.asia_session_box(ctx.candles, ctx.current_candle)
+        box = ctx.asia_box
         next false unless box
 
         box[:high] > box[:low]
       end
 
       register('session_high_break') do |ctx|
-        box = SessionDetector.asia_session_box(ctx.candles, ctx.current_candle)
+        # Breakout of the previous relevant session
+        sessions = ctx.current_sessions
+        box = if sessions.include?('new_york')
+                ctx.london_box || ctx.asia_box
+              elsif sessions.include?('london') || sessions.include?('london_ny')
+                ctx.asia_box
+              else
+                ctx.asia_box
+              end
+
         next false unless box && ctx.current_candle && ctx.previous_candle
 
-        asia_high = box[:high]
-        asia_low = box[:low]
+        box_high = box[:high]
+        box_low = box[:low]
         cur = ctx.current_candle[:close]
         prev = ctx.previous_candle[:close]
 
-        if cur > asia_high && prev <= asia_high
+        if cur > box_high && prev <= box_high
           ctx.direction = :long
           ctx.entry_price = ctx.current_candle[:close]
-          ctx.stop_distance = [ctx.atr * 1.5, cur - asia_low].min
+          ctx.stop_distance = [ctx.atr * 1.5, cur - box_low].min
           true
-        elsif cur < asia_low && prev >= asia_low
+        elsif cur < box_low && prev >= box_low
           ctx.direction = :short
           ctx.entry_price = ctx.current_candle[:close]
-          ctx.stop_distance = [ctx.atr * 1.5, asia_high - cur].min
+          ctx.stop_distance = [ctx.atr * 1.5, box_high - cur].min
           true
         else
           false
@@ -67,10 +76,17 @@ module StrategyBuilder
         ctx.volume_zscore >= 1.0
       end
 
-      # 2. Mean Reversion — prefer Asia session box; fall back to swing extremes if box not ready.
+      # 2. Mean Reversion
       register('price_near_session_extreme') do |ctx|
-        box = SessionDetector.asia_session_box(ctx.candles, ctx.current_candle, min_candles: 2,
-                                                                                min_range_atr_fraction: 0.01)
+        sessions = ctx.current_sessions
+        box = if sessions.include?('new_york')
+                ctx.london_box
+              elsif sessions.include?('london') || sessions.include?('london_ny')
+                ctx.asia_box
+              else
+                ctx.asia_box
+              end
+
         last_high, last_low = if box
                                 [{ price: box[:high] }, { price: box[:low] }]
                               else

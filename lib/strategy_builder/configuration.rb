@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "uri"
+
 module StrategyBuilder
   class Configuration
     VALID_TIMEFRAMES = %w[1m 3m 5m 15m 30m 1h 2h 4h 6h 1d 1w].freeze
@@ -56,6 +58,24 @@ module StrategyBuilder
     # Ollama Cloud (https://ollama.com/api) when STRATEGY_BUILDER_OLLAMA_CLOUD is truthy; requires OLLAMA_API_KEY.
     def ollama_cloud?
       @ollama_cloud == true
+    end
+
+    # True when OLLAMA_BASE_URL host is ollama.com (marketing/API host), not a local ollama serve.
+    def ollama_public_website_host?
+      url = @ollama_base_url.to_s
+      return false if url.strip.empty?
+
+      host = URI.parse(url).host&.downcase
+      host&.end_with?("ollama.com") == true
+    rescue URI::InvalidURIError
+      false
+    end
+
+    # Use TLS + Bearer (OllamaSslBearerClient): explicit cloud flag or ollama.com URL with an API key.
+    def ollama_bearer_transport?
+      return true if ollama_cloud?
+
+      ollama_public_website_host? && !@ollama_api_key.to_s.strip.empty?
     end
 
     def initialize

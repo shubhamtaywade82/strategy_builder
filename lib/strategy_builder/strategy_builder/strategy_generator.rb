@@ -81,7 +81,7 @@ module StrategyBuilder
     end
 
     def ollama_troubleshooting_lines(cfg)
-      if cfg.ollama_cloud?
+      if cfg.ollama_bearer_transport?
         return [
           "Ollama Cloud: request failed or returned empty JSON (quota, model name, network, or upstream error).",
           "Config: STRATEGY_BUILDER_OLLAMA_CLOUD=1 | OLLAMA_BASE_URL=#{cfg.ollama_base_url} | " \

@@ -172,13 +172,18 @@ RSpec.describe StrategyBuilder::SessionDetector do
     end
   end
 
-  describe ".asia_session_box" do
-    it "returns high and low for the UTC day of the reference candle" do
-      ref = candles.last
-      box = described_class.asia_session_box(candles, ref)
+  describe ".session_box" do
+    it "returns high and low for a session block" do
+      box = described_class.session_box(candles, "asia")
       expect(box).to be_a(Hash)
       expect(box[:high]).to be > box[:low]
-      expect(box[:candle_count]).to be >= 3
+      expect(box[:candle_count]).to be > 0
+    end
+
+    it "can skip active session and return completed_only" do
+      box = described_class.session_box(candles, "asia", completed_only: true)
+      expect(box).to be_a(Hash)
+      expect(box[:high]).to be > box[:low]
     end
   end
 end

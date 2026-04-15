@@ -200,15 +200,36 @@ RSpec.describe StrategyBuilder do
       expect { StrategyBuilder.ollama_client }.to raise_error(StrategyBuilder::ConfigurationError, /OLLAMA_BASE_URL/)
     end
 
-    it "does not raise when OLLAMA_ALLOW_PUBLIC_WEBSITE=1" do
+    it "raises when OLLAMA_ALLOW_PUBLIC_WEBSITE=1 but ollama.com has no OLLAMA_API_KEY (Bearer required)" do
       ENV["OLLAMA_ALLOW_PUBLIC_WEBSITE"] = "1"
+      ENV.delete("OLLAMA_API_KEY")
+      StrategyBuilder.reset!
       StrategyBuilder.configure do |c|
         c.ollama_base_url = "https://ollama.com"
+        c.ollama_api_key = ""
         c.coindcx_api_key = "k"
         c.coindcx_api_secret = "s"
       end
 
-      expect { StrategyBuilder.ollama_client }.not_to raise_error
+      expect { StrategyBuilder.ollama_client }.to raise_error(StrategyBuilder::ConfigurationError, /OLLAMA_API_KEY/)
+    end
+
+    it "uses OllamaSslBearerClient when ollama.com and OLLAMA_API_KEY are set without STRATEGY_BUILDER_OLLAMA_CLOUD" do
+      ENV.delete("STRATEGY_BUILDER_OLLAMA_CLOUD")
+      ENV["OLLAMA_API_KEY"] = "implicit-cloud-key"
+      StrategyBuilder.reset!
+      StrategyBuilder.configure do |c|
+        c.ollama_base_url = "https://ollama.com"
+        c.ollama_api_key = "implicit-cloud-key"
+        c.coindcx_api_key = "k"
+        c.coindcx_api_secret = "s"
+      end
+
+      client = StrategyBuilder.ollama_client
+      expect(client).to be_a(StrategyBuilder::OllamaSslBearerClient)
+    ensure
+      ENV.delete("OLLAMA_API_KEY")
+      StrategyBuilder.reset!
     end
 
     it "uses OllamaSslBearerClient when STRATEGY_BUILDER_OLLAMA_CLOUD=1 and OLLAMA_API_KEY is set" do

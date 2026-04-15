@@ -114,15 +114,25 @@ module StrategyBuilder
     def ollama_client
       @ollama_client ||= begin
         cfg = configuration
-        if cfg.ollama_cloud?
+
+        if cfg.ollama_bearer_transport?
           api_key = cfg.ollama_api_key.to_s.strip
           if api_key.empty?
             raise ConfigurationError,
-              "STRATEGY_BUILDER_OLLAMA_CLOUD=1 requires OLLAMA_API_KEY (create a key at https://ollama.com/settings/keys)."
+              "OLLAMA_API_KEY is required for Ollama Cloud (#{cfg.ollama_base_url}). " \
+                "Create a key at https://ollama.com/settings/keys, or set STRATEGY_BUILDER_OLLAMA_CLOUD=1 with the key, " \
+                "or use OLLAMA_BASE_URL=http://127.0.0.1:11434 for local `ollama serve`."
           end
 
           warn_if_cloud_base_url_mismatch(cfg)
         else
+          if cfg.ollama_public_website_host? && ENV.fetch("OLLAMA_ALLOW_PUBLIC_WEBSITE", "").strip == "1"
+            raise ConfigurationError,
+              "OLLAMA_BASE_URL=#{cfg.ollama_base_url} targets Ollama Cloud; OLLAMA_ALLOW_PUBLIC_WEBSITE=1 only bypasses the " \
+                "hostname guard and does not send Bearer auth. Set OLLAMA_API_KEY (the client then uses TLS + cloud " \
+                "automatically), or set STRATEGY_BUILDER_OLLAMA_CLOUD=1. For local models use http://127.0.0.1:11434."
+          end
+
           warn_if_ollama_base_url_is_public_website
           reject_public_ollama_website_base_url!
         end
@@ -135,7 +145,7 @@ module StrategyBuilder
         config.num_ctx = cfg.ollama_num_ctx
         config.retries = cfg.ollama_retries
 
-        if cfg.ollama_cloud?
+        if cfg.ollama_bearer_transport?
           OllamaSslBearerClient.new(config: config, bearer_token: cfg.ollama_api_key)
         else
           Ollama::Client.new(config: config)
@@ -165,7 +175,7 @@ module StrategyBuilder
     # https://ollama.com is the marketing site / catalog, not the same as `ollama serve` on your machine.
     def warn_if_ollama_base_url_is_public_website
       return if @ollama_public_base_url_warned
-      return if configuration.ollama_cloud?
+      return if configuration.ollama_bearer_transport?
 
       url = configuration.ollama_base_url.to_s
       return unless public_ollama_website_base_url?(url)
@@ -194,7 +204,7 @@ module StrategyBuilder
     # Stops the pipeline before LLM calls that would only EOF/reset against the marketing host.
     # Override with OLLAMA_ALLOW_PUBLIC_WEBSITE=1 if you truly intend a custom proxy at that hostname.
     def reject_public_ollama_website_base_url!
-      return if configuration.ollama_cloud?
+      return if configuration.ollama_bearer_transport?
 
       url = configuration.ollama_base_url.to_s
       return unless public_ollama_website_base_url?(url)
