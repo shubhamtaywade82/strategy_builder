@@ -22,6 +22,11 @@ module StrategyBuilder
       @registry.key?(name.to_s)
     end
 
+    # Sorted snake_case identifiers allowed in strategy `entry.conditions` (LLM + validator contract).
+    def self.condition_ids
+      @condition_ids ||= @registry.keys.map(&:to_s).sort.freeze
+    end
+
     def self.validate_condition_names!(names)
       unknown = Array(names).map(&:to_s).reject { |n| registered?(n) }
       return if unknown.empty?

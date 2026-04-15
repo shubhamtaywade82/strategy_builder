@@ -47,6 +47,22 @@ RSpec.describe StrategyBuilder::StrategyGenerator do
       expect(out).not_to be_empty
       expect(out.first[:name]).to eq(TestData.strategy_candidate[:name])
     end
+
+    it 'seeds built-in templates when the LLM returns proposals with unknown entry conditions' do
+      planner = instance_double(Ollama::Agent::Planner)
+      allow(StrategyBuilder::OllamaGeneratePlanner).to receive(:build).and_return(planner)
+      bad = TestData.strategy_candidate.merge(
+        entry: { conditions: %w[not_a_registered_condition] }
+      )
+      allow(planner).to receive(:run).and_return([JSON.parse(JSON.generate(bad))])
+
+      generator = described_class.new(client: StrategyBuilder.ollama_client)
+      out = generator.generate(features: features, count: 2)
+
+      expect(out.size).to eq(2)
+      expect(out.first[:name]).to include('offline template')
+      expect(out.first[:rationale]).to include('failed validation')
+    end
   end
 
   describe '#mutate' do
@@ -60,6 +76,21 @@ RSpec.describe StrategyBuilder::StrategyGenerator do
 
       expect(out.size).to eq(1)
       expect(out.first[:name]).to include('offline template')
+    end
+
+    it 'uses decorated seed template when LLM mutations fail validation' do
+      planner = instance_double(Ollama::Agent::Planner)
+      allow(StrategyBuilder::OllamaGeneratePlanner).to receive(:build).and_return(planner)
+      seed = StrategyBuilder::StrategyTemplates.all.first
+      bad = seed.merge(entry: { conditions: %w[invalid_slug_for_mutate] })
+      allow(planner).to receive(:run).and_return([JSON.parse(JSON.generate(bad))])
+
+      generator = described_class.new(client: StrategyBuilder.ollama_client)
+      out = generator.mutate(features: features, template: seed)
+
+      expect(out.size).to eq(1)
+      expect(out.first[:name]).to include('offline template')
+      expect(out.first[:rationale]).to include('failed validation')
     end
   end
 end

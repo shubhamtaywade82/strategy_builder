@@ -4,21 +4,8 @@ module StrategyBuilder
   class PromptBuilder
     SCHEMA_PATH = File.expand_path("../agent/schemas/strategy_candidate.json", __dir__)
 
-    # Passed to Ollama /api/generate as the response format schema. Tight enough to block bare
-    # JSON strings (e.g. "_") while staying looser than full StrategyCandidate JSON Schema so
-    # smaller models can still satisfy the contract; Ruby-side CandidateValidator enforces detail.
-    STRATEGY_CANDIDATES_GENERATE_SCHEMA = {
-      "type" => "array",
-      "minItems" => 1,
-      "maxItems" => 8,
-      "items" => {
-        "type" => "object",
-        "required" => %w[name family timeframes entry exit risk],
-        "additionalProperties" => true
-      }
-    }.freeze
-
-    SYSTEM_PROMPT = <<~SYSTEM
+    # Static rules + families. Runtime `system_prompt` appends registered entry condition IDs.
+    SYSTEM_PROMPT_STATIC = <<~SYSTEM
       You are a quantitative strategy researcher for cryptocurrency futures markets.
       Your role is to propose trading strategy candidates based on computed market features.
 
@@ -32,6 +19,7 @@ module StrategyBuilder
       7. Prefer strategies with clear invalidation conditions — a strategy that cannot be invalidated is not a strategy.
       8. When mutating templates, change at most 3 parameters or conditions at a time. Do not reinvent the template.
       9. exit.partial_exits MUST have the same length as exit.targets, each value in (0,1], and the values MUST sum to exactly 1.0 (position fractions closed at each R target).
+      10. entry.conditions MUST be a JSON array of strings where each string is EXACTLY one identifier from the ALLOWED_ENTRY_CONDITION_IDS list appended below. Use snake_case identifiers only — no English sentences, no dotted feature paths (e.g. mtf_alignment...), no comparisons or pseudo-code.
 
       STRATEGY FAMILIES YOU MAY USE:
       - session_breakout: Trade breakouts of session ranges (Asia, London, NY)
@@ -45,6 +33,86 @@ module StrategyBuilder
       - structure_shift: Enter on market structure shift (MSS)
       - custom: Novel combination (must justify why existing families don't fit)
     SYSTEM
+
+    # @deprecated Prefer {.system_prompt} for LLM calls (includes dynamic condition ID list).
+    SYSTEM_PROMPT = SYSTEM_PROMPT_STATIC
+
+    def self.system_prompt
+      "#{SYSTEM_PROMPT_STATIC}#{entry_conditions_contract_appendix}"
+    end
+
+    def self.entry_conditions_contract_appendix
+      ids = ConditionRegistry.condition_ids
+      <<~APPENDIX
+
+        ALLOWED_ENTRY_CONDITION_IDS (comma-separated; each entry.conditions[] value must be one of these, verbatim):
+        #{ids.join(', ')}
+
+        EXAMPLE_VALID_BUNDLES_BY_FAMILY (copy identifiers only from the list above; combine 1–8 conditions per strategy):
+        #{example_condition_bundles_by_family}
+      APPENDIX
+    end
+
+    def self.example_condition_bundles_by_family
+      seen = {}
+      lines = []
+      StrategyTemplates.all.each do |t|
+        fam = t[:family].to_s
+        next if seen[fam]
+
+        conds = t.dig(:entry, :conditions)
+        next if conds.nil? || conds.empty?
+
+        seen[fam] = true
+        lines << "- #{fam}: #{conds.join(', ')}"
+      end
+      lines.join("\n")
+    end
+
+    def self.entry_conditions_snippet_for_task_prompt
+      <<~SNIPPET
+
+        ALLOWED_ENTRY_CONDITION_IDS (entry.conditions[] must use only these strings, verbatim):
+        #{ConditionRegistry.condition_ids.join(', ')}
+
+        EXAMPLE_VALID_BUNDLES_BY_FAMILY:
+        #{example_condition_bundles_by_family}
+      SNIPPET
+    end
+
+    # Ollama /api/generate response schema: constrains entry.conditions to registered IDs.
+    def self.strategy_candidates_generate_schema
+      ids = ConditionRegistry.condition_ids
+      {
+        "type" => "array",
+        "minItems" => 1,
+        "maxItems" => 8,
+        "items" => {
+          "type" => "object",
+          "required" => %w[name family timeframes entry exit risk],
+          "additionalProperties" => true,
+          "properties" => {
+            "entry" => {
+              "type" => "object",
+              "required" => ["conditions"],
+              "additionalProperties" => true,
+              "properties" => {
+                "conditions" => {
+                  "type" => "array",
+                  "minItems" => 1,
+                  "maxItems" => 8,
+                  "items" => { "type" => "string", "enum" => ids }
+                },
+                "direction" => {
+                  "type" => "string",
+                  "enum" => %w[long short both]
+                }
+              }
+            }
+          }
+        }
+      }
+    end
 
     # Build a prompt for generating new strategy candidates from features.
     def self.generation_prompt(features:, templates:, mode: :generate)
@@ -69,7 +137,7 @@ module StrategyBuilder
 
         EXISTING TEMPLATE FAMILIES (for reference — do not duplicate, but you may derive from them):
         #{templates.map { |t| "- #{t[:name]} (#{t[:family]})" }.join("\n")}
-
+        #{entry_conditions_snippet_for_task_prompt}
         INSTRUCTIONS:
         1. Study the feature data: trend alignment, volatility regime, session patterns, structure, volume behavior.
         2. Identify edges: What patterns in this data suggest a repeatable trading opportunity?
@@ -94,7 +162,7 @@ module StrategyBuilder
 
         CURRENT MARKET FEATURES:
         #{JSON.pretty_generate(features)}
-
+        #{entry_conditions_snippet_for_task_prompt}
         INSTRUCTIONS:
         1. Analyze how the current market features align with or diverge from this template's assumptions.
         2. Propose exactly 2 mutations:
@@ -102,6 +170,7 @@ module StrategyBuilder
            - Mutation B: Aggressive — change entry conditions or exit logic while keeping the same family.
         3. Each mutation must have a different name and a rationale field explaining what changed and why.
         4. Keep parameter_ranges updated for all tunable values.
+        5. If you change entry.conditions, every value must remain one of ALLOWED_ENTRY_CONDITION_IDS above (verbatim snake_case). Prefer reusing the template's condition ids when possible.
 
         OUTPUT FORMAT:
         Return ONLY a JSON array of exactly 2 strategy objects.

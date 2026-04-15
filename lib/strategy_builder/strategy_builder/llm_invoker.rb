@@ -19,7 +19,7 @@ module StrategyBuilder
         begin
           log_llm_inputs(
             prompt: prompt,
-            system_prompt: PromptBuilder::SYSTEM_PROMPT,
+            system_prompt: PromptBuilder.system_prompt,
             context: {},
             response_schema: response_schema
           )
@@ -27,7 +27,7 @@ module StrategyBuilder
           raw = @planner.run(
             prompt: prompt,
             context: {},
-            system_prompt: PromptBuilder::SYSTEM_PROMPT,
+            system_prompt: PromptBuilder.system_prompt,
             schema: schema_for_llm
           )
 

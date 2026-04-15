@@ -20,13 +20,27 @@ module StrategyBuilder
         mode: :generate
       )
 
-      candidates = call_llm(prompt, response_schema: PromptBuilder::STRATEGY_CANDIDATES_GENERATE_SCHEMA)
+      candidates = call_llm(prompt, response_schema: PromptBuilder.strategy_candidates_generate_schema)
       if candidates.empty?
         log_ollama_fallback(reason: "Ollama unreachable, stream dropped, invalid JSON, or empty parse")
         candidates = template_fallback_candidates(features: features, count: count)
       end
 
       validated = @validator.filter_valid(candidates)
+      if validated.empty? && candidates.any?
+        instrument = features[:instrument] || "unknown"
+        @logger.warn do
+          "All #{candidates.size} LLM proposals failed validation; seeding from built-in templates " \
+            "(instrument: #{instrument})."
+        end
+        candidates = template_fallback_candidates(
+          features: features,
+          count: count,
+          offline_reason:
+            "Seeded from built-in template after LLM proposals failed validation (instrument: #{instrument})."
+        )
+        validated = @validator.filter_valid(candidates)
+      end
 
       @logger.info { "Generated #{candidates.size} candidates, #{validated.size} passed validation" }
       validated.map { |v| v[:candidate] }
@@ -41,13 +55,31 @@ module StrategyBuilder
         mode: :mutate
       )
 
-      candidates = call_llm(prompt, response_schema: PromptBuilder::STRATEGY_CANDIDATES_GENERATE_SCHEMA)
+      candidates = call_llm(prompt, response_schema: PromptBuilder.strategy_candidates_generate_schema)
       if candidates.empty?
         log_ollama_fallback(reason: "mutate call failed same as generate")
         candidates = templates.map { |t| decorate_fallback_template(t, features) }
       end
 
-      @validator.filter_valid(candidates).map { |v| v[:candidate] }
+      validated = @validator.filter_valid(candidates)
+      if validated.empty? && candidates.any?
+        instrument = features[:instrument] || "unknown"
+        @logger.warn do
+          "All #{candidates.size} LLM mutations failed validation; using decorated seed template(s) " \
+            "(instrument: #{instrument})."
+        end
+        candidates = templates.map do |t|
+          decorate_fallback_template(
+            t,
+            features,
+            offline_reason:
+              "Seeded from built-in template after LLM mutations failed validation (instrument: #{instrument})."
+          )
+        end
+        validated = @validator.filter_valid(candidates)
+      end
+
+      validated.map { |v| v[:candidate] }
     end
 
     # Critique existing strategies against features.
@@ -117,18 +149,20 @@ module StrategyBuilder
       JSON.parse(JSON.generate(obj), symbolize_names: true)
     end
 
-    def decorate_fallback_template(template, features)
+    def decorate_fallback_template(template, features, offline_reason: nil)
       cand = deep_dup_hash(template)
       instrument = features[:instrument] || "unknown"
       cand[:name] = "#{cand[:name]} (offline template)"
-      cand[:rationale] =
+      cand[:rationale] = offline_reason ||
         "Seeded from built-in template while the LLM was unavailable (instrument: #{instrument})."
       cand
     end
 
-    def template_fallback_candidates(features:, count: 3)
+    def template_fallback_candidates(features:, count: 3, offline_reason: nil)
       n = [count, StrategyTemplates.all.size].min
-      StrategyTemplates.all.first(n).map { |template| decorate_fallback_template(template, features) }
+      StrategyTemplates.all.first(n).map do |template|
+        decorate_fallback_template(template, features, offline_reason: offline_reason)
+      end
     end
 
     def compact_features(features)
