@@ -153,8 +153,11 @@ module StrategyBuilder
       agent.validate(days_back: [options[:days] * 3, 365].min)
 
       puts "Phase 4: Ranking..."
-      ranked = agent.rank
-      puts "  #{ranked.size} strategies ranked"
+      catalog_before_rank = StrategyCatalog.new
+      pending = catalog_before_rank.by_status("backtested").size
+      ranked_preview = agent.rank
+      puts "  Scored #{pending} backtested strateg#{pending == 1 ? 'y' : 'ies'} in this pass."
+      puts "  Leaderboard preview (top scores, up to #{ranked_preview.size} entries; may include prior runs unless you used --fresh)."
 
       puts "Phase 5: Documenting..."
       agent.document

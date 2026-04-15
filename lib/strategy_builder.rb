@@ -7,6 +7,7 @@ require "logger"
 require "json"
 require "time"
 require "fileutils"
+require "uri"
 
 # Core dependencies
 require "ollama_client"
@@ -101,6 +102,7 @@ module StrategyBuilder
 
     def ollama_client
       @ollama_client ||= begin
+        warn_if_ollama_base_url_is_public_website
         config = Ollama::Config.new
         config.base_url = configuration.ollama_base_url if configuration.ollama_base_url
         config.model = configuration.ollama_model
@@ -116,6 +118,23 @@ module StrategyBuilder
       @configuration = nil
       @coindcx_client = nil
       @ollama_client = nil
+      @ollama_public_base_url_warned = false
+    end
+
+    # https://ollama.com is the marketing site / catalog, not the same as `ollama serve` on your machine.
+    def warn_if_ollama_base_url_is_public_website
+      return if @ollama_public_base_url_warned
+
+      url = configuration.ollama_base_url.to_s
+      host = URI.parse(url).host&.downcase
+      return unless host&.end_with?("ollama.com")
+
+      @ollama_public_base_url_warned = true
+      logger.warn do
+        "OLLAMA_BASE_URL=#{url} points at the ollama.com website, not a local `ollama serve` instance. " \
+          "ollama-client expects the open-source server API (e.g. http://127.0.0.1:11434). " \
+          "Unset OLLAMA_BASE_URL or set it to your machine's Ollama listen address; then `ollama pull` your model tag."
+      end
     end
   end
 end

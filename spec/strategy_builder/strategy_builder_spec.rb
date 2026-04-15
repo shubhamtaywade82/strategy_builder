@@ -157,3 +157,26 @@ RSpec.describe StrategyBuilder::MarkdownExporter do
     end
   end
 end
+
+RSpec.describe StrategyBuilder do
+  describe ".warn_if_ollama_base_url_is_public_website" do
+    around do |example|
+      StrategyBuilder.reset!
+      example.run
+      StrategyBuilder.reset!
+    end
+
+    it "logs once when OLLAMA_BASE_URL points at ollama.com" do
+      StrategyBuilder.configure { |c| c.ollama_base_url = "https://ollama.com" }
+      expect(StrategyBuilder.logger).to receive(:warn).once
+      StrategyBuilder.warn_if_ollama_base_url_is_public_website
+      StrategyBuilder.warn_if_ollama_base_url_is_public_website
+    end
+
+    it "does not log for a local Ollama listen address" do
+      StrategyBuilder.configure { |c| c.ollama_base_url = "http://127.0.0.1:11434" }
+      expect(StrategyBuilder.logger).not_to receive(:warn)
+      StrategyBuilder.warn_if_ollama_base_url_is_public_website
+    end
+  end
+end
