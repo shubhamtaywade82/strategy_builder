@@ -171,6 +171,16 @@ RSpec.describe StrategyBuilder::SessionDetector do
       expect(sessions).to be_an(Array)
     end
   end
+
+  describe ".asia_session_box" do
+    it "returns high and low for the UTC day of the reference candle" do
+      ref = candles.last
+      box = described_class.asia_session_box(candles, ref)
+      expect(box).to be_a(Hash)
+      expect(box[:high]).to be > box[:low]
+      expect(box[:candle_count]).to be >= 3
+    end
+  end
 end
 
 RSpec.describe StrategyBuilder::FeatureBuilder do
