@@ -148,11 +148,21 @@ RSpec.describe StrategyBuilder::CandidateValidator do
       expect(result[:valid]).to be false
     end
 
-    it "rejects candidate with mismatched partial exits" do
+    it "repairs partial exits when count or sum disagrees with targets" do
       bad = TestData.strategy_candidate.dup
-      bad[:exit] = bad[:exit].merge(partial_exits: [0.3, 0.3, 0.3]) # sums to 0.9 with 2 targets
+      bad[:exit] = bad[:exit].merge(partial_exits: [0.3, 0.3, 0.3])
       result = validator.validate(bad)
-      expect(result[:valid]).to be false
+      expect(result[:valid]).to be true
+      expect(bad[:exit][:partial_exits]).to eq([0.5, 0.5])
+    end
+
+    it "repairs partial exits that sum under 1.0 when counts match" do
+      cand = TestData.strategy_candidate.dup
+      cand[:exit] = cand[:exit].merge(partial_exits: [0.4, 0.4])
+      result = validator.validate(cand)
+      expect(result[:valid]).to be true
+      expect(cand[:exit][:partial_exits].sum).to be_within(1e-6).of(1.0)
+      expect(cand[:exit][:partial_exits].size).to eq(cand[:exit][:targets].size)
     end
 
     it "rejects a non-hash candidate without raising" do

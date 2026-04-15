@@ -31,6 +31,7 @@ module StrategyBuilder
       6. Strategies must be realistic for crypto futures: consider 24/7 markets, session-based liquidity, and fee impact.
       7. Prefer strategies with clear invalidation conditions — a strategy that cannot be invalidated is not a strategy.
       8. When mutating templates, change at most 3 parameters or conditions at a time. Do not reinvent the template.
+      9. exit.partial_exits MUST have the same length as exit.targets, each value in (0,1], and the values MUST sum to exactly 1.0 (position fractions closed at each R target).
 
       STRATEGY FAMILIES YOU MAY USE:
       - session_breakout: Trade breakouts of session ranges (Asia, London, NY)

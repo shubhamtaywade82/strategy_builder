@@ -101,6 +101,7 @@ module StrategyBuilder
     SCHEMA_PATH = File.expand_path("../agent/schemas/strategy_candidate.json", __dir__)
 
     REQUIRED_KEYS = %i[name family timeframes entry exit risk].freeze
+    PARTIAL_EXIT_SUM_TOLERANCE = 0.05
 
     def initialize
       schema_data = JSON.parse(File.read(SCHEMA_PATH))
@@ -118,6 +119,8 @@ module StrategyBuilder
           errors: ["Candidate must be a JSON object, got #{candidate.class.name} (#{candidate.inspect[0, 120]})"]
         }
       end
+
+      repair_partial_exits!(candidate)
 
       errors = []
 
@@ -154,6 +157,56 @@ module StrategyBuilder
     end
 
     private
+
+    # LLMs often emit partial_exits that do not sum to 1.0 or do not match targets length.
+    # Mutates candidate in place so validation and downstream backtests see a coherent schedule.
+    def repair_partial_exits!(candidate)
+      exit_cfg = candidate[:exit]
+      return unless exit_cfg.is_a?(Hash)
+
+      targets = exit_cfg[:targets]
+      parts = exit_cfg[:partial_exits]
+      return unless targets.is_a?(Array) && targets.any?
+      return unless parts.is_a?(Array) && parts.any?
+
+      n = targets.size
+      nums = parts.filter_map do |p|
+        Float(p)
+      rescue ArgumentError, TypeError
+        nil
+      end
+      return if nums.size != parts.size
+      return if nums.any?(&:negative?) || nums.any? { |x| x.nan? || x.infinite? }
+
+      repaired =
+        if nums.size != n
+          unit_equal_weights(n)
+        elsif nums.sum <= 0
+          unit_equal_weights(n)
+        elsif (nums.sum - 1.0).abs < PARTIAL_EXIT_SUM_TOLERANCE
+          snap_unit_weights(nums)
+        else
+          snap_unit_weights(nums.map { |w| w / nums.sum })
+        end
+
+      exit_cfg[:partial_exits] = repaired if repaired
+    rescue ArgumentError, TypeError
+      nil
+    end
+
+    def unit_equal_weights(n)
+      snap_unit_weights(Array.new(n, 1.0 / n))
+    end
+
+    def snap_unit_weights(weights)
+      w = weights.map(&:to_f)
+      return nil if w.empty?
+
+      w = w.map { |x| x.round(8) }
+      drift = 1.0 - w.sum
+      w[-1] = (w[-1] + drift).round(8)
+      w
+    end
 
     def check_required_keys(candidate)
       missing = REQUIRED_KEYS.reject { |k| candidate.key?(k) && !candidate[k].nil? }
@@ -197,7 +250,9 @@ module StrategyBuilder
       return [] unless parts.is_a?(Array)
 
       sum = parts.sum
-      return ["Partial exits sum to #{sum}, must be ~1.0"] unless (sum - 1.0).abs < 0.05
+      unless (sum - 1.0).abs < PARTIAL_EXIT_SUM_TOLERANCE
+        return ["Partial exits sum to #{sum}, must be ~1.0"]
+      end
 
       if exit_config[:targets] && parts.size != exit_config[:targets].size
         return ["Partial exits count (#{parts.size}) != targets count (#{exit_config[:targets].size})"]
