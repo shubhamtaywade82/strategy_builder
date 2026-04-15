@@ -1,0 +1,174 @@
+# frozen_string_literal: true
+
+require "thor"
+require "dotenv/load"
+require_relative "../lib/strategy_builder"
+
+module StrategyBuilder
+  class CLI < Thor
+    desc "research QUERY", "Run full strategy research pipeline"
+    option :instruments, type: :array, default: nil, desc: "Instruments to research (e.g., B-BTC_USDT)"
+    option :timeframes, type: :array, default: nil, desc: "Timeframes (e.g., 5m 15m 1h)"
+    option :days, type: :numeric, default: 30, desc: "Days of historical data"
+    option :max_steps, type: :numeric, default: 20, desc: "Max agent iterations"
+    def research(query)
+      configure!
+      agent = AgentLoop.new(max_steps: options[:max_steps])
+      result = agent.run(query: query)
+
+      puts "\n=== Research Complete ==="
+      puts "Steps: #{result[:steps].size}"
+      puts "Strategies found: #{result[:strategies_found]}"
+      puts "Passing: #{result[:passing_strategies]}"
+    end
+
+    desc "discover", "Discover market features for configured instruments"
+    option :instruments, type: :array, default: nil
+    option :timeframes, type: :array, default: nil
+    option :days, type: :numeric, default: 30
+    def discover
+      configure!
+      agent = AgentLoop.new
+      features = agent.discover(
+        instruments: options[:instruments],
+        timeframes: options[:timeframes],
+        days_back: options[:days]
+      )
+
+      features.each do |instrument, feat|
+        puts "\n=== #{instrument} ==="
+        puts "  MTF Alignment: #{feat.dig(:mtf_alignment, :alignment, :regime)}"
+        puts "  Volatility: #{feat.dig(:volatility, :regime)}"
+        puts "  Structure: #{feat.dig(:structure, :structure)}"
+        puts "  RSI: #{feat.dig(:momentum, :rsi_current)&.round(1)}"
+        puts "  Rel Volume: #{feat.dig(:volume, :relative_volume_current)&.round(2)}"
+      end
+    end
+
+    desc "propose", "Generate strategy candidates from market features"
+    option :instruments, type: :array, default: nil
+    option :timeframes, type: :array, default: nil
+    option :days, type: :numeric, default: 30
+    option :mode, type: :string, default: "generate", desc: "generate or mutate"
+    def propose
+      configure!
+      agent = AgentLoop.new
+      features = agent.discover(
+        instruments: options[:instruments],
+        timeframes: options[:timeframes],
+        days_back: options[:days]
+      )
+
+      candidates = agent.propose(
+        features_by_instrument: features,
+        mode: options[:mode].to_sym
+      )
+
+      puts "\n=== Proposed Strategies ==="
+      candidates.each do |c|
+        puts "  [#{c[:id]}] #{c[:name]} for #{c[:instrument]}"
+      end
+    end
+
+    desc "backtest", "Run walk-forward backtest on proposed strategies"
+    option :days, type: :numeric, default: 90
+    def backtest
+      configure!
+      agent = AgentLoop.new
+      agent.validate(days_back: options[:days])
+      puts "Backtest phase complete."
+    end
+
+    desc "rank", "Rank backtested strategies"
+    def rank
+      configure!
+      agent = AgentLoop.new
+      ranked = agent.rank
+      puts "\n=== Strategy Rankings ==="
+      ranked.each_with_index do |entry, i|
+        puts "  #{i + 1}. #{entry[:strategy][:name]} — score: #{entry.dig(:ranking, :final_score)&.round(3)} — #{entry[:status]}"
+      end
+    end
+
+    desc "document", "Generate documentation for passing strategies"
+    def document
+      configure!
+      agent = AgentLoop.new
+      agent.document
+      puts "Documentation exported."
+    end
+
+    desc "catalog", "List strategies in the catalog"
+    option :status, type: :string, default: nil
+    def catalog
+      configure!
+      cat = StrategyCatalog.new
+      entries = options[:status] ? cat.by_status(options[:status]) : cat.all
+
+      puts "\n=== Strategy Catalog (#{entries.size} entries) ==="
+      entries.each do |e|
+        score = e.dig(:ranking, :final_score)&.round(3) || "N/A"
+        puts "  [#{e[:id]}] #{e[:strategy][:name]} — #{e[:status]} — score: #{score}"
+      end
+    end
+
+    desc "templates", "List built-in strategy templates"
+    def templates
+      puts "\n=== Strategy Templates ==="
+      StrategyTemplates.all.each do |t|
+        puts "  #{t[:name]} (#{t[:family]}) — TFs: #{t[:timeframes].join('/')}"
+      end
+    end
+
+    desc "pipeline QUERY", "Run full discover→propose→validate→rank→document pipeline"
+    option :instruments, type: :array, default: nil
+    option :timeframes, type: :array, default: nil
+    option :days, type: :numeric, default: 30
+    def pipeline(query)
+      configure!
+      agent = AgentLoop.new
+
+      puts "Phase 1: Discovering features..."
+      features = agent.discover(
+        instruments: options[:instruments],
+        timeframes: options[:timeframes],
+        days_back: options[:days]
+      )
+
+      puts "Phase 2: Proposing strategies..."
+      candidates = agent.propose(features_by_instrument: features)
+      puts "  #{candidates.size} candidates proposed"
+
+      puts "Phase 3: Backtesting..."
+      agent.validate(days_back: [options[:days] * 3, 365].min)
+
+      puts "Phase 4: Ranking..."
+      ranked = agent.rank
+      puts "  #{ranked.size} strategies ranked"
+
+      puts "Phase 5: Documenting..."
+      agent.document
+
+      catalog = StrategyCatalog.new
+      puts "\n=== Pipeline Complete ==="
+      puts "Total strategies: #{catalog.size}"
+      puts "Passing: #{catalog.passing.size}"
+      puts "Watchlist: #{catalog.by_status('watchlist').size}"
+      puts "Rejected: #{catalog.by_status('reject').size}"
+    end
+
+    private
+
+    def configure!
+      StrategyBuilder.configure do |c|
+        c.coindcx_api_key = ENV.fetch("COINDCX_API_KEY", nil)
+        c.coindcx_api_secret = ENV.fetch("COINDCX_API_SECRET", nil)
+        c.ollama_model = ENV.fetch("OLLAMA_AGENT_MODEL", "qwen3:8b")
+        c.default_instruments = options[:instruments] if options[:instruments]
+        c.default_timeframes = options[:timeframes] if options[:timeframes]
+      end
+    end
+  end
+end
+
+StrategyBuilder::CLI.start(ARGV) if __FILE__ == $PROGRAM_NAME

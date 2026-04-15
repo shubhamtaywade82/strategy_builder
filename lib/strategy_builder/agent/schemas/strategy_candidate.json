@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StrategyCandidateSchema",
+  "type": "object",
+  "required": ["name", "family", "timeframes", "entry", "exit", "risk"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 100
+    },
+    "family": {
+      "type": "string",
+      "enum": [
+        "session_breakout",
+        "session_mean_reversion",
+        "mtf_pullback",
+        "compression_breakout",
+        "failed_breakout",
+        "vwap_reclaim",
+        "volume_continuation",
+        "atr_expansion",
+        "structure_shift",
+        "custom"
+      ]
+    },
+    "timeframes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "1d"]
+      },
+      "minItems": 1,
+      "maxItems": 5
+    },
+    "session": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["asia", "london", "new_york", "asia_london", "london_ny", "off_hours", "any"]
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": ["conditions"],
+      "properties": {
+        "conditions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["long", "short", "both"]
+        }
+      }
+    },
+    "exit": {
+      "type": "object",
+      "required": ["targets"],
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0.1, "maximum": 20.0 },
+          "minItems": 1,
+          "maxItems": 5
+        },
+        "partial_exits": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+        },
+        "trail": {
+          "type": "string"
+        },
+        "time_stop_candles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["stop", "position_sizing"],
+      "properties": {
+        "stop": {
+          "type": "string"
+        },
+        "position_sizing": {
+          "type": "string",
+          "enum": ["fixed_risk_percent", "fixed_notional", "volatility_adjusted", "kelly"]
+        },
+        "max_risk_percent": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 3.0
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "properties": {
+        "min_volume_zscore": { "type": "number" },
+        "min_atr_percent": { "type": "number" },
+        "max_atr_percent": { "type": "number" },
+        "required_regime": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "required_structure": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "min_mtf_alignment": { "type": "number" }
+      }
+    },
+    "invalidation": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 10
+    },
+    "parameter_ranges": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "rationale": {
+      "type": "string",
+      "maxLength": 2000
+    }
+  }
+}
