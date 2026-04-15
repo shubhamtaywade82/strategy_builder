@@ -87,7 +87,11 @@ module StrategyBuilder
                            generator.generate(features: features)
                          end
 
-          candidates.map { |c| { name: c[:name], family: c[:family], status: :proposed } }
+          catalog = StrategyCatalog.new
+          candidates.map do |c|
+            id = catalog.add(c)
+            { id: id, name: c[:name], family: c[:family], status: :proposed }
+          end
         end
       end
 
@@ -158,7 +162,18 @@ module StrategyBuilder
 
         def call(args)
           catalog = StrategyCatalog.new
-          catalog.ranked(limit: args["limit"] || 20).map do |entry|
+          limit = args["limit"] || 20
+
+          catalog.by_status("backtested").each do |entry|
+            wf_result = entry.dig(:backtest_results, :walk_forward)
+            next unless wf_result
+
+            gate_result = Gatekeeper.evaluate(walk_forward_result: wf_result)
+            score_result = Scorer.score(walk_forward_result: wf_result)
+            catalog.attach_ranking(entry[:id], score_result.merge(gate_result))
+          end
+
+          catalog.ranked(limit: limit).map do |entry|
             {
               id: entry[:id],
               name: entry[:strategy][:name],

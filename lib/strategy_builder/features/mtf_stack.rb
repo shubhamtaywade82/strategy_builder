@@ -75,14 +75,20 @@ module StrategyBuilder
       current > ema_current ? :bullish : :bearish
     end
 
+    # Order timeframes coarse → fine using Configuration::VALID_TIMEFRAMES (not Hash insertion order).
+    def self.sorted_mtf_keys(keys)
+      rank = Configuration::VALID_TIMEFRAMES.each_with_index.to_h
+      keys.sort_by { |k| rank.fetch(k.to_s, 999) }.reverse
+    end
+
     # Full MTF profile for LLM consumption.
     def self.profile(mtf_candles)
       align = alignment(mtf_candles)
 
       pullbacks = []
-      tfs = mtf_candles.keys
-      tfs.each_cons(2) do |higher, lower|
-        pb = pullback_opportunities(mtf_candles, higher_tf: higher, lower_tf: lower)
+      sorted = sorted_mtf_keys(mtf_candles.keys)
+      sorted.each_cons(2) do |higher_tf, lower_tf|
+        pb = pullback_opportunities(mtf_candles, higher_tf: higher_tf, lower_tf: lower_tf)
         pullbacks << pb if pb
       end
 

@@ -113,12 +113,35 @@ RSpec.describe StrategyBuilder::VolumeProfile do
       rvol = described_class.relative_volume(candles)
       expect(rvol.compact.size).to be > 0
     end
+
+    it "aligns one value per candle index using the prior window only (no extra leading value)" do
+      lookback = 3
+      vols = [100.0, 100.0, 100.0, 300.0] + [100.0] * 10
+      bars = vols.each_with_index.map do |v, i|
+        TestData.candle(timestamp: i, volume: v, open: 1, high: 2, low: 0.5, close: 1.5)
+      end
+      rvol = described_class.relative_volume(bars, lookback: lookback)
+      expect(rvol.size).to eq(bars.size)
+      expect(rvol[0..(lookback - 1)]).to all(be_nil)
+      baseline = (100.0 + 100.0 + 100.0) / 3.0
+      expect(rvol[lookback]).to eq(300.0 / baseline)
+    end
   end
 
   describe ".volume_zscore" do
     it "produces z-score values" do
       zscores = described_class.volume_zscore(candles)
       expect(zscores.compact.size).to be > 0
+    end
+
+    it "returns one entry per candle and scores the final bar" do
+      lookback = 3
+      bars = (0..6).map do |i|
+        TestData.candle(timestamp: i, volume: 100.0 + i, open: 1, high: 2, low: 0.5, close: 1.5)
+      end
+      z = described_class.volume_zscore(bars, lookback: lookback)
+      expect(z.size).to eq(bars.size)
+      expect(z.last).not_to be_nil
     end
   end
 

@@ -54,6 +54,10 @@ module StrategyBuilder
 
         next unless hit
 
+        # Planned exit leg: fraction of *original* size, capped by what is still open.
+        exit_leg_size = (position.size * fraction)
+        exit_leg_size = [exit_leg_size, position.remaining_size].min
+
         # Remove this target from position
         remaining_targets = targets[(i + 1)..]
         position.targets = remaining_targets
@@ -62,7 +66,7 @@ module StrategyBuilder
         remaining_partials = partials[(i + 1)..] || []
         position.partial_exits = remaining_partials
 
-        is_full = remaining_targets.empty? || position.remaining_size * (1.0 - fraction) < 0.001
+        is_full = remaining_targets.empty? || (position.remaining_size - exit_leg_size) <= 1e-9
 
         # Shift stop to breakeven after first target
         if i == 0 && !position.be_shifted

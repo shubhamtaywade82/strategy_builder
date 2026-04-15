@@ -30,6 +30,7 @@ module StrategyBuilder
     )
       @fee_model = fee_model
       @slippage_model = slippage_model
+      # Reserved for future partial-fill / queue simulation; entry/exit prices use SlippageModel today.
       @fill_model = fill_model
       @trailing_model = trailing_model
       @partial_exit_model = partial_exit_model
@@ -161,7 +162,9 @@ module StrategyBuilder
     end
 
     def apply_partial_exit(position, result, candle)
-      exit_size = position.remaining_size * result[:fraction]
+      # Fractions are shares of original position.size (e.g. 0.33/0.33/0.34), not of remaining_size.
+      exit_size = (position.size * result[:fraction])
+      exit_size = [exit_size, position.remaining_size].min
       exit_price = @slippage_model.apply(result[:price], reverse_direction(position.direction), candle)
       fee = @fee_model.calculate(exit_price, exit_size)
 
@@ -191,6 +194,9 @@ module StrategyBuilder
       stop_distance = (position.entry_price - position.stop_price).abs
       pnl_r = stop_distance.zero? ? 0.0 : total_pnl / (stop_distance * position.size)
 
+      entry_idx = position.entry_index
+      hold_bars = entry_idx ? (index - entry_idx) : index
+
       Trade.new(
         position_id: position.id,
         direction: position.direction,
@@ -202,9 +208,9 @@ module StrategyBuilder
         pnl: total_pnl,
         pnl_r: pnl_r,
         fees: position.fills.sum { |f| f[:fee] || 0 } + exit_fee,
-        slippage: 0.0, # tracked in fill model
+        slippage: 0.0, # adverse slippage is applied in prices via SlippageModel, not accumulated here
         exit_reason: exit_result[:reason],
-        hold_candles: index
+        hold_candles: hold_bars
       )
     end
 

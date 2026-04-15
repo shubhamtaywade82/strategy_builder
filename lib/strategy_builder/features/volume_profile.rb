@@ -4,50 +4,41 @@ module StrategyBuilder
   class VolumeProfile
     DEFAULT_LOOKBACK = 20
 
-    # Relative volume: current volume / rolling average volume.
+    # Relative volume at bar i: volumes[i] / mean(volumes[i-lookback...i-1]).
+    # Indices 0..lookback-1 are nil (aligned with candle index i).
     def self.relative_volume(candles, lookback: DEFAULT_LOOKBACK)
-      return [nil] * candles.size if candles.size < lookback
+      return [] if candles.nil? || candles.empty?
 
       volumes = candles.map { |c| c[:volume] }
-      result = [nil] * (lookback - 1)
+      candles.size.times.map do |i|
+        next nil if i < lookback
 
-      volumes.each_cons(lookback + 1) do |window|
-        baseline = window[0...-1]
-        current = window.last
-        avg = baseline.sum / baseline.size.to_f
-        result << (avg.zero? ? 0.0 : current / avg)
+        baseline = volumes[(i - lookback)...i]
+        avg = baseline.sum / lookback.to_f
+        avg.zero? ? 0.0 : volumes[i] / avg
       end
-
-      # Handle last element alignment
-      if result.size < candles.size
-        avg = volumes.last(lookback + 1)[0...-1].sum / lookback.to_f
-        result << (avg.zero? ? 0.0 : volumes.last / avg)
-      end
-
-      result[0...candles.size]
     end
 
-    # Volume z-score: how many standard deviations current volume is from mean.
+    # Z-score of current volume vs trailing window *excluding* the current bar.
+    # One value per candle index; last bar has a score (fixes prior off-by-one short array).
     def self.volume_zscore(candles, lookback: DEFAULT_LOOKBACK)
-      return [nil] * candles.size if candles.size < lookback
+      return [] if candles.nil? || candles.empty?
 
       volumes = candles.map { |c| c[:volume] }
-      result = [nil] * (lookback - 1)
+      candles.size.times.map do |i|
+        next nil if i < lookback
 
-      (lookback...volumes.size).each do |i|
         window = volumes[(i - lookback)...i]
-        mean = window.sum / window.size.to_f
-        variance = window.sum { |v| (v - mean)**2 } / window.size.to_f
+        mean = window.sum / lookback.to_f
+        variance = window.sum { |v| (v - mean)**2 } / lookback.to_f
         stddev = Math.sqrt(variance)
 
         if stddev.zero?
-          result << 0.0
+          0.0
         else
-          result << (volumes[i] - mean) / stddev
+          (volumes[i] - mean) / stddev
         end
       end
-
-      result[0...candles.size]
     end
 
     # Detect volume bursts: candles where volume z-score exceeds threshold.

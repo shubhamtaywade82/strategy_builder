@@ -37,6 +37,56 @@ RSpec.describe StrategyBuilder::BacktestEngine do
       expect(metrics[:win_rate]).to be_between(0, 1)
     end
 
+    it "records hold_candles as exit bar minus entry bar" do
+      entry_idx = 100
+      exit_idx = 107
+      pos = StrategyBuilder::BacktestEngine::Position.new(
+        id: 1,
+        direction: :long,
+        entry_price: 100.0,
+        entry_time: 1,
+        entry_index: entry_idx,
+        size: 1.0,
+        remaining_size: 1.0,
+        stop_price: 90.0,
+        targets: [],
+        partial_exits: [1.0],
+        trail_config: nil,
+        state: :position_open,
+        fills: [],
+        pnl: 0.0,
+        be_shifted: false,
+        current_trail_stop: 90.0
+      )
+      candle = { high: 120, low: 99, close: 110, timestamp: 999 }
+      trade = engine.send(:close_position, pos, { reason: :target_hit, price: 110.0 }, candle, exit_idx)
+      expect(trade.hold_candles).to eq(exit_idx - entry_idx)
+    end
+
+    it "sizes partial exits as fractions of original position, not remaining_size" do
+      pos = StrategyBuilder::BacktestEngine::Position.new(
+        id: 1,
+        direction: :long,
+        entry_price: 100.0,
+        entry_time: 1,
+        entry_index: 50,
+        size: 1.0,
+        remaining_size: 0.67,
+        stop_price: 90.0,
+        targets: [110.0],
+        partial_exits: [0.33, 0.67],
+        trail_config: nil,
+        state: :position_open,
+        fills: [],
+        pnl: 0.0,
+        be_shifted: false,
+        current_trail_stop: 90.0
+      )
+      candle = { high: 115, low: 99, close: 110, timestamp: 2 }
+      engine.send(:apply_partial_exit, pos, { fraction: 0.33, price: 110.0 }, candle)
+      expect(pos.remaining_size).to be_within(1e-9).of(0.34)
+    end
+
     it "force-closes open positions at end of data" do
       # Signal on last candle — should be force-closed with :end_of_data
       always_signal = lambda do |candles_so_far, _strat|

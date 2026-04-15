@@ -14,7 +14,7 @@ module StrategyBuilder
       @in_sample_ratio = StrategyBuilder.configuration.walk_forward_in_sample_ratio
     end
 
-    # Run walk-forward analysis with anchored expanding window.
+    # Run walk-forward analysis using non-overlapping contiguous folds (each fold is its own IS/OOS split).
     # Returns: { folds: [...], aggregate: {...}, stability_score: Float }
     def run(strategy:, candles:, signal_generator:, folds: DEFAULT_FOLDS)
       fold_size = candles.size / folds
