@@ -85,7 +85,9 @@ module StrategyBuilder
           "(server crash/OOM, proxy timeout, VPN, Wi-Fi, or WSL2-to-host networking); not a CoinDCX issue.",
         "Config: OLLAMA_BASE_URL=#{cfg.ollama_base_url} | OLLAMA_AGENT_MODEL/OLLAMA_MODEL=#{cfg.ollama_model} | " \
           "OLLAMA_TIMEOUT=#{cfg.ollama_timeout}s | OLLAMA_NUM_CTX=#{cfg.ollama_num_ctx}",
-        "Try: curl -sS #{cfg.ollama_base_url}/api/tags | head -c 300",
+        "Try (this is the host Ruby uses, not ollama.com): curl -sS #{cfg.ollama_base_url}/api/tags | head -c 300",
+        "Note: https://ollama.com/api/tags is only a public catalog of names; strategy_builder calls YOUR " \
+          "OLLAMA_BASE_URL (usually local ollama serve).",
         "WSL2 + Ollama on Windows: use 127.0.0.1 (default) or the Windows host IP from `ip route show default | awk '{print $3}'`.",
         "Stability: run `ollama ps`, use a smaller/faster model, lower OLLAMA_NUM_CTX (e.g. 4096), " \
           "raise OLLAMA_TIMEOUT for big thinking models, watch `ollama serve` logs for unload/OOM."
