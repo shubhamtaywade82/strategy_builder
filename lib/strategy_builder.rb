@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+lib_root = __dir__
+$LOAD_PATH.unshift(lib_root) unless $LOAD_PATH.include?(lib_root)
+
 require "logger"
 require "json"
 require "time"
@@ -20,7 +23,7 @@ module StrategyBuilder
   autoload :CandleLoader,       "strategy_builder/market_data/candle_loader"
   autoload :InstrumentLoader,   "strategy_builder/market_data/instrument_loader"
   autoload :DataNormalizer,     "strategy_builder/market_data/data_normalizer"
-  autoload :CandleStore,        "strategy_builder/market_data/data_normalizer"    # co-located with DataNormalizer
+  autoload :CandleStore,        "strategy_builder/market_data/candle_store"
 
   # Feature engine
   autoload :MtfStack,           "strategy_builder/features/mtf_stack"
@@ -34,7 +37,7 @@ module StrategyBuilder
   # Strategy generation
   autoload :PromptBuilder,      "strategy_builder/strategy_builder/prompt_builder"
   autoload :CandidateParser,    "strategy_builder/strategy_builder/candidate_parser"
-  autoload :CandidateValidator, "strategy_builder/strategy_builder/candidate_parser" # co-located with CandidateParser
+  autoload :CandidateValidator, "strategy_builder/strategy_builder/candidate_validator"
   autoload :StrategyGenerator,  "strategy_builder/strategy_builder/strategy_generator"
   autoload :StrategyCatalog,    "strategy_builder/strategy_builder/strategy_catalog"
   autoload :StrategyTemplates,  "strategy_builder/strategy_builder/strategy_templates"
@@ -42,22 +45,22 @@ module StrategyBuilder
   # Backtest
   autoload :BacktestEngine,     "strategy_builder/backtest/engine"
   autoload :FillModel,          "strategy_builder/backtest/fill_model"
-  autoload :SlippageModel,      "strategy_builder/backtest/fill_model"             # co-located
-  autoload :FeeModel,           "strategy_builder/backtest/fill_model"             # co-located
-  autoload :PartialExitModel,   "strategy_builder/backtest/fill_model"             # co-located
-  autoload :TrailingModel,      "strategy_builder/backtest/fill_model"             # co-located
+  autoload :SlippageModel,      "strategy_builder/backtest/slippage_model"
+  autoload :FeeModel,           "strategy_builder/backtest/fee_model"
+  autoload :PartialExitModel,   "strategy_builder/backtest/partial_exit_model"
+  autoload :TrailingModel,      "strategy_builder/backtest/trailing_model"
   autoload :Metrics,            "strategy_builder/backtest/metrics"
   autoload :WalkForward,        "strategy_builder/backtest/walk_forward"
 
   # Ranking
   autoload :Scorer,             "strategy_builder/ranking/scorer"
-  autoload :Gatekeeper,         "strategy_builder/ranking/scorer"                  # co-located
-  autoload :Robustness,         "strategy_builder/ranking/scorer"                  # co-located
+  autoload :Gatekeeper,         "strategy_builder/ranking/gatekeeper"
+  autoload :Robustness,         "strategy_builder/ranking/robustness"
 
   # Documentation
   autoload :StrategyCard,       "strategy_builder/documentation/strategy_card"
-  autoload :MarkdownExporter,   "strategy_builder/documentation/strategy_card"     # co-located
-  autoload :JsonExporter,       "strategy_builder/documentation/strategy_card"     # co-located
+  autoload :MarkdownExporter,   "strategy_builder/documentation/markdown_exporter"
+  autoload :JsonExporter,       "strategy_builder/documentation/json_exporter"
 
   # Agent
   autoload :AgentLoop,          "strategy_builder/agent/agent_loop"
