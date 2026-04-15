@@ -350,6 +350,7 @@ PLATFORMS
 
 DEPENDENCIES
   coindcx-client (~> 0.1)
+  concurrent-ruby (~> 1.3)
   csv
   debug
   dotenv (~> 3.0)

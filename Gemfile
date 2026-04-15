@@ -15,6 +15,9 @@ gem "indicators", "~> 1.0" # TA-Lib style indicators
 gem "numo-narray"           # Numeric arrays for fast computation
 gem "csv"
 
+# Parallel instrument fetches (AgentLoop discover / validate)
+gem "concurrent-ruby", "~> 1.3"
+
 # Schema validation
 gem "json_schemer", "~> 2.0"
 

@@ -7,6 +7,7 @@ module StrategyBuilder
       @planner = OllamaGeneratePlanner.build(@client)
       @validator = CandidateValidator.new
       @logger = StrategyBuilder.logger
+      @llm_invoker = LlmInvoker.new(planner: @planner, logger: @logger)
     end
 
     # Generate new strategy candidates from feature data.
@@ -80,6 +81,18 @@ module StrategyBuilder
     end
 
     def ollama_troubleshooting_lines(cfg)
+      if cfg.ollama_cloud?
+        return [
+          "Ollama Cloud: request failed or returned empty JSON (quota, model name, network, or upstream error).",
+          "Config: STRATEGY_BUILDER_OLLAMA_CLOUD=1 | OLLAMA_BASE_URL=#{cfg.ollama_base_url} | " \
+            "OLLAMA_AGENT_MODEL/OLLAMA_MODEL=#{cfg.ollama_model} | OLLAMA_TIMEOUT=#{cfg.ollama_timeout}s",
+          "Verify OLLAMA_API_KEY is set and not revoked (https://ollama.com/settings/keys).",
+          "Smoke test: curl -sS -H \"Authorization: Bearer $OLLAMA_API_KEY\" " \
+            "#{cfg.ollama_base_url}/api/tags | head -c 400",
+          "Pick a cloud-capable model tag (often ends with -cloud); see model list in Ollama app or docs."
+        ]
+      end
+
       [
         "Why EOF / connection reset: the HTTP connection to Ollama closed while reading the response body " \
           "(server crash/OOM, proxy timeout, VPN, Wi-Fi, or WSL2-to-host networking); not a CoinDCX issue.",
@@ -95,101 +108,9 @@ module StrategyBuilder
       ]
     end
 
-    def transient_network_error?(error)
-      error.is_a?(EOFError) ||
-        error.is_a?(OpenSSL::SSL::SSLError) ||
-        error.is_a?(SocketError) ||
-        error.is_a?(Net::OpenTimeout) ||
-        error.is_a?(Net::ReadTimeout) ||
-        (error.is_a?(Errno::ECONNRESET) || error.is_a?(Errno::EPIPE) ||
-         error.is_a?(Errno::ECONNREFUSED) || error.is_a?(Errno::EHOSTUNREACH))
-    end
-
-    def ollama_error_retryable?(error)
-      return false if error.is_a?(Ollama::NotFoundError)
-
-      return true if error.is_a?(Ollama::RetryExhaustedError)
-      return true if error.is_a?(Ollama::TimeoutError)
-      return error.retryable? if error.is_a?(Ollama::HTTPError)
-
-      msg = error.message.to_s.downcase
-      %w[connection reset refused eof timeout broken pipe].any? { |fragment| msg.include?(fragment) }
-    end
-
-    def llm_retry_sleep(attempt)
-      base = StrategyBuilder.configuration.ollama_llm_retry_base_seconds
-      sleep([base * (2**(attempt - 1)), 16.0].min)
-    end
-
-    # Call LLM with retry logic and backoff for flaky local Ollama / truncated streams.
     # @param response_schema [Hash, nil] Ollama JSON schema; nil uses ollama-client's permissive any-JSON schema.
     def call_llm(prompt, response_schema: nil)
-      max_attempts = [StrategyBuilder.configuration.ollama_llm_max_attempts, 1].max
-      attempts = 0
-      schema_for_llm = response_schema || OllamaGeneratePlanner::ANY_JSON_SCHEMA
-
-      loop do
-        attempts += 1
-        begin
-          raw = @planner.run(
-            prompt: prompt,
-            context: {},
-            system_prompt: PromptBuilder::SYSTEM_PROMPT,
-            schema: schema_for_llm
-          )
-
-          if raw.is_a?(Hash) || raw.is_a?(Array)
-            return normalize_llm_candidate_list(raw)
-          end
-
-          parsed = CandidateParser.parse(raw.to_s)
-          return parsed if parsed.any?
-
-          raise "Empty parse result"
-        rescue Ollama::NotFoundError => e
-          model = StrategyBuilder.configuration.ollama_model
-          hint = if e.respond_to?(:suggestions) && e.suggestions&.any?
-                     " Ollama suggests: #{e.suggestions.first(3).join(', ')}."
-                   else
-                     ""
-                   end
-          msg = "No Ollama model #{model.inspect} on this server.#{hint} " \
-                "Set OLLAMA_AGENT_MODEL (or OLLAMA_MODEL) in .env to a tag from `ollama list`, " \
-                "run `ollama pull <tag>`, and retry."
-          raise ConfigurationError, msg, cause: e
-        rescue Ollama::SchemaViolationError, Ollama::InvalidJSONError => e
-          @logger.warn { "LLM output invalid (attempt #{attempts}/#{max_attempts}): #{e.message}" }
-          return [] if attempts >= max_attempts
-
-          llm_retry_sleep(attempts)
-        rescue Ollama::TimeoutError => e
-          @logger.warn { "LLM timeout (attempt #{attempts}/#{max_attempts}): #{e.message}" }
-          return [] if attempts >= max_attempts
-
-          llm_retry_sleep(attempts)
-        rescue Ollama::Error => e
-          if ollama_error_retryable?(e)
-            @logger.warn { "LLM transport error (attempt #{attempts}/#{max_attempts}): #{e.message}" }
-            return [] if attempts >= max_attempts
-
-            llm_retry_sleep(attempts)
-            next
-          end
-
-          @logger.error { "LLM error: #{e.message}" }
-          raise
-        rescue StandardError => e
-          if transient_network_error?(e) || e.message == "Empty parse result"
-            @logger.warn { "LLM call failed (attempt #{attempts}/#{max_attempts}): #{e.message}" }
-            return [] if attempts >= max_attempts
-
-            llm_retry_sleep(attempts)
-            next
-          end
-
-          raise
-        end
-      end
+      @llm_invoker.run(prompt, response_schema: response_schema)
     end
 
     def deep_dup_hash(obj)
@@ -208,16 +129,6 @@ module StrategyBuilder
     def template_fallback_candidates(features:, count: 3)
       n = [count, StrategyTemplates.all.size].min
       StrategyTemplates.all.first(n).map { |template| decorate_fallback_template(template, features) }
-    end
-
-    # Strip large arrays from features to fit context window.
-    def normalize_llm_candidate_list(raw)
-      list = raw.is_a?(Array) ? raw : [raw]
-      list.filter_map do |item|
-        next unless item.is_a?(Hash)
-
-        CandidateParser.symbolize_keys_deep(item)
-      end
     end
 
     def compact_features(features)

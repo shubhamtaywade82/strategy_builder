@@ -35,4 +35,59 @@ RSpec.describe StrategyBuilder::Configuration do
       expect(described_class.ollama_model_from_env).to eq("valid")
     end
   end
+
+  describe ".truthy_env?" do
+    it "treats 1, true, yes, on as true" do
+      %w[1 true yes on].each do |v|
+        ENV["SB_TEST_FLAG"] = v
+        expect(described_class.truthy_env?("SB_TEST_FLAG")).to be(true), "expected #{v.inspect} to be truthy"
+      end
+    end
+
+    it "treats unset or other values as false" do
+      ENV.delete("SB_TEST_FLAG")
+      expect(described_class.truthy_env?("SB_TEST_FLAG")).to be(false)
+
+      ENV["SB_TEST_FLAG"] = "0"
+      expect(described_class.truthy_env?("SB_TEST_FLAG")).to be(false)
+    end
+  end
+
+  describe ".default_ollama_base_url" do
+    around do |example|
+      saved = ENV["OLLAMA_BASE_URL"]
+      ENV.delete("OLLAMA_BASE_URL")
+      example.run
+      saved ? ENV["OLLAMA_BASE_URL"] = saved : ENV.delete("OLLAMA_BASE_URL")
+    end
+
+    it "uses https://ollama.com for cloud when OLLAMA_BASE_URL is unset" do
+      expect(described_class.default_ollama_base_url(true)).to eq("https://ollama.com")
+    end
+
+    it "uses OLLAMA_BASE_URL for cloud when set" do
+      ENV["OLLAMA_BASE_URL"] = "https://custom.example"
+      expect(described_class.default_ollama_base_url(true)).to eq("https://custom.example")
+    end
+
+    it "uses local default when not cloud" do
+      expect(described_class.default_ollama_base_url(false)).to eq("http://127.0.0.1:11434")
+    end
+  end
+
+  describe "cloud mode" do
+    around do |example|
+      saved = %w[STRATEGY_BUILDER_OLLAMA_CLOUD OLLAMA_BASE_URL OLLAMA_API_KEY].to_h { |k| [k, ENV[k]] }
+      %w[STRATEGY_BUILDER_OLLAMA_CLOUD OLLAMA_BASE_URL OLLAMA_API_KEY].each { |k| ENV.delete(k) }
+      example.run
+      saved.each { |k, v| v ? ENV[k] = v : ENV.delete(k) }
+    end
+
+    it "sets ollama_cloud? from STRATEGY_BUILDER_OLLAMA_CLOUD" do
+      ENV["STRATEGY_BUILDER_OLLAMA_CLOUD"] = "1"
+      cfg = described_class.new
+      expect(cfg.ollama_cloud?).to be(true)
+      expect(cfg.ollama_base_url).to eq("https://ollama.com")
+    end
+  end
 end

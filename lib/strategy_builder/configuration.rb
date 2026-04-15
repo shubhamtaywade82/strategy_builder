@@ -16,15 +16,40 @@ module StrategyBuilder
       DEFAULT_OLLAMA_MODEL
     end
 
+    def self.truthy_env?(name)
+      val = ENV[name]&.strip&.downcase
+      %w[1 true yes on].include?(val)
+    end
+
+    def self.default_ollama_base_url(cloud)
+      if cloud
+        raw = ENV["OLLAMA_BASE_URL"]&.strip
+        return raw if raw && !raw.empty?
+
+        "https://ollama.com"
+      else
+        ENV.fetch("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+      end
+    end
+
     attr_accessor :coindcx_api_key, :coindcx_api_secret,
                   :ollama_model, :ollama_temperature, :ollama_timeout,
                   :ollama_base_url, :ollama_num_ctx, :ollama_retries,
                   :ollama_llm_max_attempts, :ollama_llm_retry_base_seconds,
+                  :ollama_api_key,
                   :default_instruments, :default_timeframes,
                   :backtest_fee_rate, :backtest_slippage_bps,
                   :walk_forward_in_sample_ratio,
                   :max_strategy_candidates, :max_agent_iterations,
-                  :output_dir, :logger
+                  :output_dir, :logger,
+                  :parallel_instrument_max,
+                  :backtest_indicator_warmup,
+                  :backtest_default_stop_price_fraction
+
+    # Ollama Cloud (https://ollama.com/api) when STRATEGY_BUILDER_OLLAMA_CLOUD is truthy; requires OLLAMA_API_KEY.
+    def ollama_cloud?
+      @ollama_cloud == true
+    end
 
     def initialize
       @coindcx_api_key = ENV.fetch("COINDCX_API_KEY", nil)
@@ -34,8 +59,10 @@ module StrategyBuilder
       @ollama_temperature = 0.3
       # Large prompts + thinking models often need >120s on CPU-bound hosts.
       @ollama_timeout = Integer(ENV.fetch("OLLAMA_TIMEOUT", "240"))
-      # Prefer http://127.0.0.1:11434 (Docker publish or native `ollama serve` on same WSL2/Linux). Try 127.0.0.1 over "localhost" if you see EOF / connection reset.
-      @ollama_base_url = ENV.fetch("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+      @ollama_cloud = self.class.truthy_env?("STRATEGY_BUILDER_OLLAMA_CLOUD")
+      @ollama_api_key = ENV["OLLAMA_API_KEY"]&.strip
+      # Cloud: default API root is https://ollama.com (see https://docs.ollama.com/api). Local: ollama serve.
+      @ollama_base_url = self.class.default_ollama_base_url(@ollama_cloud)
       @ollama_num_ctx = Integer(ENV.fetch("OLLAMA_NUM_CTX", "8192"))
       @ollama_retries = Integer(ENV.fetch("OLLAMA_CLIENT_RETRIES", "2"))
       @ollama_llm_max_attempts = Integer(ENV.fetch("STRATEGY_BUILDER_OLLAMA_LLM_ATTEMPTS", "5"))
@@ -50,6 +77,13 @@ module StrategyBuilder
 
       @max_strategy_candidates = 50
       @max_agent_iterations = 20
+
+      # AgentLoop: max concurrent CoinDCX fetches (bounded to avoid rate-limit / thundering herd).
+      @parallel_instrument_max = Integer(ENV.fetch("STRATEGY_BUILDER_PARALLEL_INSTRUMENTS", "6"))
+      # BacktestEngine / SignalGeneratorFactory: candles required before signals (indicator warmup).
+      @backtest_indicator_warmup = Integer(ENV.fetch("STRATEGY_BUILDER_BACKTEST_WARMUP", "50"))
+      # When strategy/signal does not specify stop distance, use this fraction of last close.
+      @backtest_default_stop_price_fraction = Float(ENV.fetch("STRATEGY_BUILDER_DEFAULT_STOP_FRAC", "0.01"))
 
       @output_dir = File.expand_path("output", __dir__)
       @logger = Logger.new($stdout, level: Logger::INFO)

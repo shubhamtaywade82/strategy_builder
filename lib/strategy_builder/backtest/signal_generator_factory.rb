@@ -9,7 +9,9 @@ module StrategyBuilder
     # Each strategy family maps to a specific signal evaluation function.
     # The factory never invents logic — it dispatches to deterministic condition checkers.
 
-    MINIMUM_WARMUP = 50
+    def self.warmup_bars
+      StrategyBuilder.configuration.backtest_indicator_warmup
+    end
 
     def self.build(strategy)
       family = strategy[:family]&.to_sym || :custom
@@ -18,7 +20,7 @@ module StrategyBuilder
       sessions = strategy[:session] || []
 
       lambda do |candles, _strat|
-        return nil if candles.size < MINIMUM_WARMUP
+        return nil if candles.size < SignalGeneratorFactory.warmup_bars
 
         # Evaluate family-specific entry logic
         signal = case family

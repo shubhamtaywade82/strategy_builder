@@ -40,11 +40,13 @@ module StrategyBuilder
   autoload :CandidateParser,    "strategy_builder/strategy_builder/candidate_parser"
   autoload :CandidateValidator, "strategy_builder/strategy_builder/candidate_validator"
   autoload :OllamaGeneratePlanner, "strategy_builder/strategy_builder/ollama_generate_planner"
+  autoload :LlmInvoker,         "strategy_builder/strategy_builder/llm_invoker"
   autoload :StrategyGenerator,  "strategy_builder/strategy_builder/strategy_generator"
   autoload :StrategyCatalog,    "strategy_builder/strategy_builder/strategy_catalog"
   autoload :StrategyTemplates,  "strategy_builder/strategy_builder/strategy_templates"
 
   # Backtest
+  autoload :BacktestPositionState, "strategy_builder/backtest/position_state"
   autoload :BacktestEngine,     "strategy_builder/backtest/engine"
   autoload :FillModel,          "strategy_builder/backtest/fill_model"
   autoload :SlippageModel,      "strategy_builder/backtest/slippage_model"
@@ -65,6 +67,12 @@ module StrategyBuilder
   autoload :JsonExporter,       "strategy_builder/documentation/json_exporter"
 
   # Agent
+  module Agent
+    autoload :ParallelInstrumentRunner, "strategy_builder/agent/parallel_instrument_runner"
+    autoload :DiscoverPhase, "strategy_builder/agent/discover_phase"
+    autoload :ValidatePhase, "strategy_builder/agent/validate_phase"
+    autoload :ToolServices, "strategy_builder/agent/tool_services"
+  end
   autoload :AgentLoop,          "strategy_builder/agent/agent_loop"
   autoload :ToolRegistry,       "strategy_builder/agent/tool_registry"
 
@@ -73,6 +81,7 @@ module StrategyBuilder
 
   # Configuration
   autoload :Configuration,      "strategy_builder/configuration"
+  autoload :OllamaSslBearerClient, "strategy_builder/ollama/ssl_bearer_client"
 
   class << self
     def configure
@@ -102,16 +111,33 @@ module StrategyBuilder
 
     def ollama_client
       @ollama_client ||= begin
-        warn_if_ollama_base_url_is_public_website
-        reject_public_ollama_website_base_url!
+        cfg = configuration
+        if cfg.ollama_cloud?
+          api_key = cfg.ollama_api_key.to_s.strip
+          if api_key.empty?
+            raise ConfigurationError,
+              "STRATEGY_BUILDER_OLLAMA_CLOUD=1 requires OLLAMA_API_KEY (create a key at https://ollama.com/settings/keys)."
+          end
+
+          warn_if_cloud_base_url_mismatch(cfg)
+        else
+          warn_if_ollama_base_url_is_public_website
+          reject_public_ollama_website_base_url!
+        end
+
         config = Ollama::Config.new
-        config.base_url = configuration.ollama_base_url if configuration.ollama_base_url
-        config.model = configuration.ollama_model
-        config.temperature = configuration.ollama_temperature
-        config.timeout = configuration.ollama_timeout
-        config.num_ctx = configuration.ollama_num_ctx
-        config.retries = configuration.ollama_retries
-        Ollama::Client.new(config: config)
+        config.base_url = cfg.ollama_base_url if cfg.ollama_base_url
+        config.model = cfg.ollama_model
+        config.temperature = cfg.ollama_temperature
+        config.timeout = cfg.ollama_timeout
+        config.num_ctx = cfg.ollama_num_ctx
+        config.retries = cfg.ollama_retries
+
+        if cfg.ollama_cloud?
+          OllamaSslBearerClient.new(config: config, bearer_token: cfg.ollama_api_key)
+        else
+          Ollama::Client.new(config: config)
+        end
       end
     end
 
@@ -120,6 +146,7 @@ module StrategyBuilder
       @coindcx_client = nil
       @ollama_client = nil
       @ollama_public_base_url_warned = false
+      @ollama_cloud_base_url_warned = false
     end
 
     # True when OLLAMA_BASE_URL points at the public ollama.com site (not `ollama serve` HTTP API).
@@ -136,6 +163,7 @@ module StrategyBuilder
     # https://ollama.com is the marketing site / catalog, not the same as `ollama serve` on your machine.
     def warn_if_ollama_base_url_is_public_website
       return if @ollama_public_base_url_warned
+      return if configuration.ollama_cloud?
 
       url = configuration.ollama_base_url.to_s
       return unless public_ollama_website_base_url?(url)
@@ -148,9 +176,24 @@ module StrategyBuilder
       end
     end
 
+    def warn_if_cloud_base_url_mismatch(cfg)
+      return if @ollama_cloud_base_url_warned
+
+      url = cfg.ollama_base_url.to_s
+      @ollama_cloud_base_url_warned = true
+      return if public_ollama_website_base_url?(url)
+
+      logger.info do
+        "STRATEGY_BUILDER_OLLAMA_CLOUD=1 with OLLAMA_BASE_URL=#{url} (custom host). " \
+          "Official Ollama Cloud API is https://ollama.com; ensure this URL serves /api/generate with your key."
+      end
+    end
+
     # Stops the pipeline before LLM calls that would only EOF/reset against the marketing host.
     # Override with OLLAMA_ALLOW_PUBLIC_WEBSITE=1 if you truly intend a custom proxy at that hostname.
     def reject_public_ollama_website_base_url!
+      return if configuration.ollama_cloud?
+
       url = configuration.ollama_base_url.to_s
       return unless public_ollama_website_base_url?(url)
       return if ENV.fetch("OLLAMA_ALLOW_PUBLIC_WEBSITE", "").strip == "1"

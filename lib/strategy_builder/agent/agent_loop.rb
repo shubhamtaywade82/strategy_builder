@@ -42,7 +42,15 @@ module StrategyBuilder
     def initialize(
       client: StrategyBuilder.ollama_client,
       registry: ToolRegistry.new,
-      max_steps: nil
+      max_steps: nil,
+      catalog_factory: -> { StrategyCatalog.new },
+      candle_loader_factory: -> { CandleLoader.new },
+      backtest_engine_factory: -> { BacktestEngine.new },
+      walk_forward_factory: ->(engine) { WalkForward.new(engine: engine) },
+      strategy_generator_factory: -> { StrategyGenerator.new },
+      discover_phase: nil,
+      validate_phase: nil,
+      parallel_instrument_max: nil
     )
       @client = client
       @registry = registry
@@ -50,6 +58,39 @@ module StrategyBuilder
       @logger = StrategyBuilder.logger
       @memory = []
       @step_count = 0
+      @catalog_factory = catalog_factory
+      @strategy_generator_factory = strategy_generator_factory
+      pmax = parallel_instrument_max || StrategyBuilder.configuration.parallel_instrument_max
+      @discover_phase = discover_phase || Agent::DiscoverPhase.new(
+        logger: @logger,
+        candle_loader_factory: candle_loader_factory,
+        parallel_max: pmax
+      )
+      @validate_phase = validate_phase || Agent::ValidatePhase.new(
+        logger: @logger,
+        candle_loader_factory: candle_loader_factory,
+        backtest_engine_factory: backtest_engine_factory,
+        walk_forward_factory: walk_forward_factory,
+        parallel_max: pmax
+      )
+    end
+
+    attr_reader :memory
+
+    class << self
+      def phase_registry
+        @phase_registry ||= {
+          discover: ->(agent, **kw) { agent.discover(**kw) },
+          propose: ->(agent, **kw) { agent.propose(**kw) },
+          validate: ->(agent, **kw) { agent.validate(**kw) },
+          rank: ->(agent, **kw) { agent.rank(**kw) },
+          document: ->(agent, **kw) { agent.document(**kw) }
+        }
+      end
+
+      def register_phase(phase, &handler)
+        phase_registry[phase.to_sym] = handler
+      end
     end
 
     # Run the full research pipeline.
@@ -58,7 +99,7 @@ module StrategyBuilder
     def run(query:)
       @logger.info { "Agent starting: #{query}" }
       result, steps = run_with_executor(executor: build_executor, query: query)
-      catalog = StrategyCatalog.new
+      catalog = @catalog_factory.call
       {
         steps: steps,
         final_result: result,
@@ -68,21 +109,12 @@ module StrategyBuilder
     end
 
     # Run a specific phase of the pipeline (for granular control).
+    # Use AgentLoop.register_phase(:custom, &:handler) to extend without editing this class.
     def run_phase(phase, **kwargs)
-      case phase
-      when :discover
-        discover(**kwargs)
-      when :propose
-        propose(**kwargs)
-      when :validate
-        validate(**kwargs)
-      when :rank
-        rank(**kwargs)
-      when :document
-        document(**kwargs)
-      else
+      handler = self.class.phase_registry.fetch(phase) do
         raise ArgumentError, "Unknown phase: #{phase}"
       end
+      handler.call(self, **kwargs)
     end
 
     # --- Individual pipeline phases (for manual/step-by-step execution) ---
@@ -91,24 +123,17 @@ module StrategyBuilder
       instruments ||= StrategyBuilder.configuration.default_instruments
       timeframes ||= StrategyBuilder.configuration.default_timeframes
 
-      results = {}
-      loader = CandleLoader.new
-
-      instruments.each do |instrument|
-        @logger.info { "Discovering features for #{instrument}..." }
-        from = Time.now - (days_back * 86_400)
-        mtf = loader.fetch_mtf(instrument: instrument, timeframes: timeframes, from: from)
-        features = FeatureBuilder.build(instrument: instrument, mtf_candles: mtf)
-        results[instrument] = features
-        @memory << { phase: :discover, instrument: instrument, features: features }
-      end
-
-      results
+      @discover_phase.execute(
+        instruments: instruments,
+        timeframes: timeframes,
+        days_back: days_back,
+        memory: @memory
+      )
     end
 
     def propose(features_by_instrument:, mode: :generate)
-      generator = StrategyGenerator.new
-      catalog = StrategyCatalog.new
+      generator = @strategy_generator_factory.call
+      catalog = @catalog_factory.call
       all_candidates = []
       seen_proposal_keys = {}
 
@@ -139,49 +164,20 @@ module StrategyBuilder
       all_candidates
     end
 
-    def validate(catalog: StrategyCatalog.new, instruments: nil, days_back: 90)
+    def validate(catalog: nil, instruments: nil, days_back: 90)
+      catalog ||= @catalog_factory.call
       instruments ||= StrategyBuilder.configuration.default_instruments
-      engine = BacktestEngine.new
-      walk_forward = WalkForward.new(engine: engine)
 
-      proposed = catalog.by_status("proposed")
-      @logger.info { "Validating #{proposed.size} proposed strategies..." }
-
-      proposed.each do |entry|
-        strategy = entry[:strategy]
-
-        instruments.each do |instrument|
-          @logger.info { "Backtesting #{strategy[:name]} on #{instrument}..." }
-
-          # Build signal generator from the strategy's entry conditions.
-          signal_gen = SignalGeneratorFactory.build(strategy)
-
-          loader = CandleLoader.new
-          from = Time.now - (days_back * 86_400)
-          primary_tf = strategy[:timeframes]&.last || "5m"
-          candles = loader.fetch(instrument: instrument, timeframe: primary_tf, from: from)
-
-          next if candles.size < 200
-
-          wf_result = walk_forward.run(
-            strategy: strategy,
-            candles: candles,
-            signal_generator: signal_gen
-          )
-
-          catalog.attach_backtest(entry[:id], {
-            metrics: wf_result[:aggregate],
-            walk_forward: wf_result,
-            instrument: instrument,
-            candle_count: candles.size
-          })
-
-          @memory << { phase: :validate, strategy_id: entry[:id], instrument: instrument, result: wf_result[:aggregate] }
-        end
-      end
+      @validate_phase.execute(
+        catalog: catalog,
+        instruments: instruments,
+        days_back: days_back,
+        memory: @memory
+      )
     end
 
-    def rank(catalog: StrategyCatalog.new)
+    def rank(catalog: nil)
+      catalog ||= @catalog_factory.call
       backtested = catalog.by_status("backtested")
       @logger.info { "Ranking #{backtested.size} backtested strategies..." }
 
@@ -205,7 +201,8 @@ module StrategyBuilder
       catalog.ranked
     end
 
-    def document(catalog: StrategyCatalog.new)
+    def document(catalog: nil)
+      catalog ||= @catalog_factory.call
       passing = catalog.passing
       @logger.info { "Documenting #{passing.size} passing strategies..." }
 
@@ -216,7 +213,7 @@ module StrategyBuilder
 
         # Optionally use LLM for richer documentation
         begin
-          generator = StrategyGenerator.new
+          generator = @strategy_generator_factory.call
           llm_doc = generator.document(
             strategy: entry[:strategy],
             backtest_results: entry[:backtest_results]

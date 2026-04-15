@@ -67,10 +67,15 @@ cp .env.example .env
 
 bundle install
 
-# Ollama: OLLAMA_BASE_URL must point at `ollama serve` (e.g. http://127.0.0.1:11434), not https://ollama.com (marketing site).
-# On WSL2 with Ollama in Docker publishing 11434, 127.0.0.1:11434 from the same distro is correct.
+# Ollama (local): OLLAMA_BASE_URL should be where `ollama serve` listens (e.g. http://127.0.0.1:11434).
 # OLLAMA_AGENT_MODEL must match a tag from `ollama list` on that server.
 ollama pull llama3.1:8b
+
+# Ollama Cloud (optional): hosted inference at https://ollama.com/api — use TLS + API key.
+# export STRATEGY_BUILDER_OLLAMA_CLOUD=1
+# export OLLAMA_API_KEY=...   # create at https://ollama.com/settings/keys
+# export OLLAMA_AGENT_MODEL=your-cloud-model-tag
+# OLLAMA_BASE_URL defaults to https://ollama.com when cloud mode is on and OLLAMA_BASE_URL is unset.
 ```
 
 ## Usage

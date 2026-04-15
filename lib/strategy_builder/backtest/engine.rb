@@ -8,7 +8,7 @@ module StrategyBuilder
     POSITION_STATES = %i[idle signal_detected entry_pending position_open exit_pending closed].freeze
 
     Position = Struct.new(
-      :id, :direction, :entry_price, :entry_time, :size, :stop_price,
+      :id, :direction, :entry_price, :entry_time, :entry_index, :size, :stop_price,
       :targets, :partial_exits, :trail_config, :state,
       :fills, :pnl, :exit_price, :exit_time, :exit_reason,
       :remaining_size, :be_shifted, :current_trail_stop,
@@ -37,20 +37,22 @@ module StrategyBuilder
     end
 
     # Run backtest for a strategy candidate on candle data.
-    # signal_generator: a callable that receives (candles_so_far, features, strategy) -> signal or nil
+    # signal_generator: a callable that receives (candles_prefix, strategy) -> signal or nil
+    # (candles_prefix is the same Array instance, grown by one candle per bar — no per-bar slice allocation).
     # Returns: { trades: [...], metrics: {...} }
     def run(strategy:, candles:, mtf_candles: nil, signal_generator:)
       trades = []
       position = nil
       position_counter = 0
+      warmup = StrategyBuilder.configuration.backtest_indicator_warmup
+      candles_prefix = []
 
       candles.each_with_index do |candle, i|
-        next if i < 50 # minimum warmup for indicators
-
-        candles_so_far = candles[0..i]
+        candles_prefix << candle
+        next if i < warmup
 
         # If in position, check exits first
-        if position && position.state == :position_open
+        if position && BacktestPositionState.active?(position)
           exit_result = check_exits(position, candle, i, strategy)
           if exit_result
             trade = close_position(position, exit_result, candle, i)
@@ -65,18 +67,18 @@ module StrategyBuilder
         # If no position, check for entry signals
         next if position
 
-        signal = signal_generator.call(candles_so_far, strategy)
+        signal = signal_generator.call(candles_prefix, strategy)
         next unless signal
 
         # Apply filters
-        next unless passes_filters?(signal, candles_so_far, strategy)
+        next unless passes_filters?(signal, candles_prefix, strategy)
 
         position_counter += 1
         position = open_position(signal, candle, i, position_counter, strategy)
       end
 
       # Force-close any open position at end
-      if position && position.state == :position_open
+      if position && BacktestPositionState.active?(position)
         trade = close_position(position, { reason: :end_of_data, price: candles.last[:close] }, candles.last, candles.size - 1)
         trades << trade
       end
@@ -105,6 +107,7 @@ module StrategyBuilder
         direction: direction,
         entry_price: entry_price,
         entry_time: candle[:timestamp],
+        entry_index: index,
         size: signal[:size] || 1.0,
         remaining_size: signal[:size] || 1.0,
         stop_price: stop_price,
@@ -120,6 +123,8 @@ module StrategyBuilder
     end
 
     def check_exits(position, candle, index, strategy)
+      BacktestPositionState.ensure_active_for_exits!(position)
+
       # 1. Stop loss hit
       if stop_hit?(position, candle)
         return { reason: :stop_loss, price: position.current_trail_stop || position.stop_price }
@@ -137,8 +142,8 @@ module StrategyBuilder
 
       # 3. Time stop
       if strategy.dig(:exit, :time_stop_candles)
-        entry_idx = position.entry_time
-        if index - entry_idx >= strategy[:exit][:time_stop_candles]
+        entry_idx = position.entry_index
+        if entry_idx && (index - entry_idx) >= strategy[:exit][:time_stop_candles]
           return { reason: :time_stop, price: candle[:close] }
         end
       end
@@ -208,8 +213,7 @@ module StrategyBuilder
       if signal[:stop_distance]
         signal[:stop_distance]
       else
-        # Fallback: 1% of price
-        candle[:close] * 0.01
+        candle[:close] * StrategyBuilder.configuration.backtest_default_stop_price_fraction
       end
     end
 

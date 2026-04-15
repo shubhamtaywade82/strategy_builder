@@ -210,5 +210,42 @@ RSpec.describe StrategyBuilder do
 
       expect { StrategyBuilder.ollama_client }.not_to raise_error
     end
+
+    it "uses OllamaSslBearerClient when STRATEGY_BUILDER_OLLAMA_CLOUD=1 and OLLAMA_API_KEY is set" do
+      ENV["STRATEGY_BUILDER_OLLAMA_CLOUD"] = "1"
+      ENV["OLLAMA_API_KEY"] = "cloud-key"
+      ENV.delete("OLLAMA_BASE_URL")
+      StrategyBuilder.reset!
+      StrategyBuilder.configure do |c|
+        c.ollama_base_url = "https://ollama.com"
+        c.ollama_api_key = "cloud-key"
+        c.coindcx_api_key = "k"
+        c.coindcx_api_secret = "s"
+      end
+
+      client = StrategyBuilder.ollama_client
+      expect(client).to be_a(StrategyBuilder::OllamaSslBearerClient)
+    ensure
+      ENV.delete("STRATEGY_BUILDER_OLLAMA_CLOUD")
+      ENV.delete("OLLAMA_API_KEY")
+      StrategyBuilder.reset!
+    end
+
+    it "raises ConfigurationError when cloud mode is on but API key is missing" do
+      ENV["STRATEGY_BUILDER_OLLAMA_CLOUD"] = "1"
+      ENV.delete("OLLAMA_API_KEY")
+      StrategyBuilder.reset!
+      StrategyBuilder.configure do |c|
+        c.ollama_base_url = "https://ollama.com"
+        c.ollama_api_key = ""
+        c.coindcx_api_key = "k"
+        c.coindcx_api_secret = "s"
+      end
+
+      expect { StrategyBuilder.ollama_client }.to raise_error(StrategyBuilder::ConfigurationError, /OLLAMA_API_KEY/)
+    ensure
+      ENV.delete("STRATEGY_BUILDER_OLLAMA_CLOUD")
+      StrategyBuilder.reset!
+    end
   end
 end
