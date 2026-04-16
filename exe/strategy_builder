@@ -163,11 +163,13 @@ module StrategyBuilder
       agent.document
 
       catalog = StrategyCatalog.new
+      summary_path = catalog.write_pipeline_run_summary(query: query)
       puts "\n=== Pipeline Complete ==="
       puts "Total strategies: #{catalog.size}"
       puts "Passing: #{catalog.passing.size}"
       puts "Watchlist: #{catalog.by_status('watchlist').size}"
       puts "Rejected: #{catalog.by_status('reject').size}"
+      puts "\nHuman-readable run summary (all rows): #{summary_path}"
     end
 
     private

@@ -91,6 +91,60 @@ module StrategyBuilder
       by_status("pass")
     end
 
+    # One Markdown file for the whole catalog (every status). Complements per-strategy cards
+    # (MarkdownExporter) which are written only for +pass+ after the document phase.
+    def write_pipeline_run_summary(query:, generated_at: Time.now.utc)
+      reports_dir = File.join(StrategyBuilder.configuration.output_dir, "reports")
+      FileUtils.mkdir_p(reports_dir)
+      path = File.join(reports_dir, "PIPELINE_RUN.md")
+      base = StrategyBuilder.configuration.output_dir
+
+      lines = []
+      lines << "# Strategy builder run summary"
+      lines << ""
+      lines << "- **Generated (UTC):** #{generated_at.iso8601}"
+      lines << "- **Query:** #{query}"
+      lines << ""
+      lines << "## Where outputs live"
+      lines << ""
+      lines << "| Artifact | Path |"
+      lines << "|----------|------|"
+      lines << "| Machine-readable catalog | `#{catalog_path}` |"
+      lines << "| This summary | `#{path}` |"
+      lines << "| Per-strategy Markdown cards | `#{File.join(base, 'reports')}/*.md` (only **pass**) |"
+      lines << "| Per-strategy JSON cards | `#{File.join(@storage_dir, '*.json')}` (only **pass**) |"
+      lines << ""
+      lines << "## Catalog (#{size} strategies)"
+      lines << ""
+      lines << "| # | ID | Name | Family | Status | Score | Trades | Expectancy |"
+      lines << "|---|----|------|--------|--------|-------|--------|------------|"
+
+      sorted = all.sort_by { |e| -(e.dig(:ranking, :final_score) || 0).to_f }
+      sorted.each_with_index do |entry, i|
+        strat = entry[:strategy] || {}
+        metrics = entry.dig(:backtest_results, :metrics) || {}
+        score = entry.dig(:ranking, :final_score)
+        score_s = score.is_a?(Numeric) ? format("%.3f", score) : "—"
+        exp = metrics[:expectancy]
+        exp_s = exp.is_a?(Numeric) ? format("%.4f", exp) : "—"
+        trades = metrics[:trade_count]
+        trades_s = trades.nil? ? "—" : trades.to_s
+        name = (strat[:name] || "").to_s.tr("|", "/")
+        lines << "| #{i + 1} | `#{entry[:id]}` | #{name} | #{strat[:family]} | **#{entry[:status]}** | #{score_s} | #{trades_s} | #{exp_s} |"
+      end
+
+      lines << ""
+      lines << "## Notes"
+      lines << ""
+      lines << "- Rich Markdown + JSON strategy cards are produced in the **document** phase **only** for strategies with status **pass**."
+      lines << "- **watchlist** / **reject** entries appear here and in `catalog.json` with full nested backtest and ranking data for deeper inspection."
+      lines << ""
+
+      File.write(path, lines.join("\n"))
+      StrategyBuilder.logger.info { "Wrote human-readable run summary: #{path}" }
+      path
+    end
+
     def size
       @catalog.size
     end

@@ -87,6 +87,8 @@ ollama pull qwen3.5:4b
 ruby exe/strategy_builder pipeline "Find breakout strategies for BTC and ETH" --fresh
 ```
 
+After a pipeline run, open **`lib/strategy_builder/output/reports/PIPELINE_RUN.md`** (default `output_dir`; configurable) for a human-readable table of every catalog strategy (any status). Per-strategy Markdown/JSON cards under the same `output_dir` tree are written only for strategies that **pass** ranking gates.
+
 ### Step-by-Step
 
 ```bash
