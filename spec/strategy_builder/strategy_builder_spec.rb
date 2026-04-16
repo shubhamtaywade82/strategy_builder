@@ -191,8 +191,10 @@ RSpec.describe StrategyBuilder do
     end
 
     it "raises ConfigurationError when OLLAMA_BASE_URL is the public ollama.com site" do
+      ENV.delete("OLLAMA_API_KEY")
       StrategyBuilder.configure do |c|
         c.ollama_base_url = "https://ollama.com"
+        c.ollama_api_key = nil
         c.coindcx_api_key = "k"
         c.coindcx_api_secret = "s"
       end
