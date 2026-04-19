@@ -66,11 +66,40 @@ module StrategyBuilder
   autoload :MarkdownExporter,   "strategy_builder/documentation/markdown_exporter"
   autoload :JsonExporter,       "strategy_builder/documentation/json_exporter"
 
+  # State layer (deterministic market snapshot)
+  module State
+    autoload :MarketState,         "strategy_builder/state/market_state"
+    autoload :RegimeClassifier,    "strategy_builder/state/regime_classifier"
+    autoload :LiquidityMapBuilder, "strategy_builder/state/liquidity_map_builder"
+    autoload :SnapshotBuilder,     "strategy_builder/state/snapshot_builder"
+  end
+
+  # Pattern layer
+  module Patterns
+    autoload :PatternLibrary, "strategy_builder/patterns/pattern_library"
+    autoload :PatternMiner,   "strategy_builder/patterns/pattern_miner"
+  end
+
   # Agent
   module Agent
     autoload :ParallelInstrumentRunner, "strategy_builder/agent/parallel_instrument_runner"
-    autoload :DiscoverPhase, "strategy_builder/agent/discover_phase"
-    autoload :ValidatePhase, "strategy_builder/agent/validate_phase"
+    autoload :DiscoverPhase,  "strategy_builder/agent/discover_phase"
+    autoload :ValidatePhase,  "strategy_builder/agent/validate_phase"
+    autoload :DeskPipeline,   "strategy_builder/agent/desk_pipeline"
+
+    module Roles
+      autoload :Observer,       "strategy_builder/agent/roles/observer"
+      autoload :PatternAnalyst, "strategy_builder/agent/roles/pattern_analyst"
+      autoload :TradeDesigner,  "strategy_builder/agent/roles/trade_designer"
+      autoload :Skeptic,        "strategy_builder/agent/roles/skeptic"
+    end
+
+    module Prompts
+      autoload :ObserverPrompt,       "strategy_builder/agent/prompts/observer_prompt"
+      autoload :PatternAnalystPrompt, "strategy_builder/agent/prompts/pattern_analyst_prompt"
+      autoload :TradeDesignerPrompt,  "strategy_builder/agent/prompts/trade_designer_prompt"
+      autoload :SkepticPrompt,        "strategy_builder/agent/prompts/skeptic_prompt"
+    end
   end
   autoload :AgentLoop,          "strategy_builder/agent/agent_loop"
 

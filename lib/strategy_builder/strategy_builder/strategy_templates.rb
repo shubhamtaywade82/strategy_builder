@@ -206,6 +206,17 @@ module StrategyBuilder
       TEMPLATES.map { |t| t[:family] }.uniq
     end
 
+    # Return templates applicable to the given regime symbol (e.g. :compression, :trend_up).
+    # Falls back to first 2 templates when no regime-specific match found.
+    def self.for_regime(regime)
+      regime_str = regime.to_s
+      matched = TEMPLATES.select do |t|
+        required = t.dig(:filters, :required_regime)
+        required&.any? { |r| r.to_s == regime_str || regime_str.start_with?(r.to_s.split("_").first) }
+      end
+      matched.any? ? matched : TEMPLATES.first(2)
+    end
+
     # Convert template to JSON for LLM consumption.
     def self.to_json_catalog
       TEMPLATES.map { |t| JSON.pretty_generate(t) }.join("\n\n---\n\n")

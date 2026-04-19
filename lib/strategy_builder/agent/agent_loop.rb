@@ -47,6 +47,7 @@ module StrategyBuilder
       backtest_engine_factory: -> { BacktestEngine.new },
       walk_forward_factory: ->(engine) { WalkForward.new(engine: engine) },
       strategy_generator_factory: -> { StrategyGenerator.new },
+      desk_pipeline_factory: nil,
       discover_phase: nil,
       validate_phase: nil,
       parallel_instrument_max: nil
@@ -58,6 +59,7 @@ module StrategyBuilder
       @step_count = 0
       @catalog_factory = catalog_factory
       @strategy_generator_factory = strategy_generator_factory
+      @desk_pipeline_factory = desk_pipeline_factory || -> { Agent::DeskPipeline.new(client: client) }
       pmax = parallel_instrument_max || StrategyBuilder.configuration.parallel_instrument_max
       @discover_phase = discover_phase || Agent::DiscoverPhase.new(
         logger: @logger,
@@ -130,18 +132,17 @@ module StrategyBuilder
     end
 
     def propose(features_by_instrument:, mode: :generate)
-      generator = @strategy_generator_factory.call
       catalog = @catalog_factory.call
       all_candidates = []
       seen_proposal_keys = {}
 
       features_by_instrument.each do |instrument, features|
-        @logger.info { "Proposing strategies for #{instrument} (mode: #{mode})..." }
+        @logger.info { "Proposing strategies for #{instrument} via DeskPipeline (mode: #{mode})..." }
 
         candidates = if mode == :mutate
-                       generator.mutate(features: features)
+                       @strategy_generator_factory.call.mutate(features: features)
                      else
-                       generator.generate(features: features)
+                       @desk_pipeline_factory.call.run(instrument: instrument, features: features)
                      end
 
         candidates.each do |candidate|

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["accepted"],
+  "properties": {
+    "accepted":         { "type": "boolean" },
+    "rejection_reason": { "type": "string" },
+    "concerns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required_changes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -2,10 +2,26 @@
 
 module StrategyBuilder
   class FillModel
-    # Immediate full fill at the simulated price produced by SlippageModel (+ spread).
-    # Partial fills / queue depth are not modeled; reserved for a future execution simulator.
-    def fill(price, size, _candle)
-      { filled_price: price, filled_size: size, partial: false }
+    # Volume-proportional fill: large orders relative to candle volume get partial fills.
+    # Small orders (< 5% of candle volume) fill in full immediately.
+    FULL_FILL_RATIO  = 0.05  # orders < 5% of candle volume fill 100%
+    MAX_FILL_PENALTY = 0.70  # orders can be at most 70% unfilled
+
+    def fill(price, size, candle)
+      volume = candle[:volume].to_f
+      if volume <= 0
+        return { filled_price: price, filled_size: size, partial: false }
+      end
+
+      volume_ratio = size / volume
+      if volume_ratio < FULL_FILL_RATIO
+        { filled_price: price, filled_size: size, partial: false }
+      else
+        penalty     = [volume_ratio * 0.3, MAX_FILL_PENALTY].min
+        filled_size = size * (1.0 - penalty)
+        filled_size = [filled_size, size].min
+        { filled_price: price, filled_size: filled_size, partial: true }
+      end
     end
   end
 

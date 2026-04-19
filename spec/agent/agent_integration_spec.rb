@@ -18,12 +18,13 @@ RSpec.describe StrategyBuilder::AgentLoop do
 
   describe "#propose" do
     it "does not add the same strategy twice when discovery covers multiple instruments" do
-      gen = instance_double(StrategyBuilder::StrategyGenerator)
-      allow(StrategyBuilder::StrategyGenerator).to receive(:new).and_return(gen)
       dup = TestData.strategy_candidate.merge(name: "Shared Strategy", family: "session_breakout")
-      allow(gen).to receive(:generate).and_return([dup])
 
-      loop = described_class.new
+      # Mock DeskPipeline to return the same candidate for any instrument
+      pipeline = instance_double(StrategyBuilder::Agent::DeskPipeline)
+      allow(pipeline).to receive(:run).and_return([dup])
+
+      loop = described_class.new(desk_pipeline_factory: -> { pipeline })
       features_by_instrument = {
         "B-BTC_USDT" => { instrument: "B-BTC_USDT" },
         "B-ETH_USDT" => { instrument: "B-ETH_USDT" }
