@@ -238,3 +238,23 @@ lib/strategy_builder/
 ## License
 
 MIT
+
+Run:
+
+# full pipeline
+
+bundle exec ruby scripts/run_research.rb pipeline "BTC compression breakout"
+
+# inspect market data with no LLM/backtest
+
+INSTRUMENTS=B-BTC_USDT TIMEFRAMES=5m,15m,1h bundle exec ruby scripts/run_research.rb data
+
+# fresh run (clears catalog first)
+
+FRESH=1 bundle exec ruby scripts/run_research.rb pipeline
+
+# custom instruments
+
+INSTRUMENTS=B-BTC_USDT,B-SOL_USDT DAYS_BACK=60 bundle exec ruby scripts/run_research.rb pipeline
+
+Env vars override everything: INSTRUMENTS, TIMEFRAMES, DAYS_BACK, FRESH, OLLAMA_MODEL, OLLAMA_BASE_URL. .env file loaded automatically.
