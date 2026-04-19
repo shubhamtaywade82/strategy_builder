@@ -10,21 +10,40 @@ module StrategyBuilder
   end
 
   class SlippageModel
-    def initialize(slippage_bps: nil, spread_bps: nil, volatility_scaled: nil)
+    def initialize(slippage_bps: nil, spread_bps: nil, volatility_scaled: nil, latency_ms: 200)
       cfg = StrategyBuilder.configuration
       @slippage_bps = slippage_bps || cfg.backtest_slippage_bps
       @spread_bps = spread_bps || cfg.backtest_spread_bps
       @volatility_scaled = volatility_scaled.nil? ? cfg.backtest_slippage_volatility_scale : volatility_scaled
+      @latency_ms = latency_ms
     end
 
     # Adverse execution price: slippage + half-spread per side (mid proxy = +raw+).
     # +direction+ is position side: :long entry buys; :short entry sells; exits use reverse_direction.
     def apply(price, direction, candle, candles_so_far: nil)
       slip = adverse_slippage_amount(price, direction, candle, candles_so_far)
-      half_spread = price * (@spread_bps / 10_000.0) / 2.0
+      
+      # Dynamic spread: widen spread during high volatility
+      dynamic_spread = @spread_bps
+      if @volatility_scaled && candles_so_far.is_a?(Array) && candles_so_far.size > 25
+        atrp = VolatilityProfile.atr_percent(candles_so_far).compact.last
+        if atrp && atrp > 2.0
+          dynamic_spread *= 1.5 # Widen spread by 50% during high vol
+        end
+      end
+      
+      half_spread = price * (dynamic_spread / 10_000.0) / 2.0
+      
+      # Latency penalty: fast markets move away from us during the 200ms routing delay
+      latency_penalty = 0.0
+      if @latency_ms > 0 && candle[:high] > candle[:low]
+        # Assume price moves against us by 1% of the candle's range per 100ms of latency during a breakout
+        latency_penalty = (candle[:high] - candle[:low]) * 0.01 * (@latency_ms / 100.0)
+      end
+
       case direction
-      when :long  then price + slip + half_spread
-      when :short then price - slip - half_spread
+      when :long  then price + slip + half_spread + latency_penalty
+      when :short then price - slip - half_spread - latency_penalty
       else price
       end
     end

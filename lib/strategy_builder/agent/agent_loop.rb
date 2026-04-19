@@ -41,7 +41,6 @@ module StrategyBuilder
 
     def initialize(
       client: StrategyBuilder.ollama_client,
-      registry: ToolRegistry.new,
       max_steps: nil,
       catalog_factory: -> { StrategyCatalog.new },
       candle_loader_factory: -> { CandleLoader.new },
@@ -53,7 +52,6 @@ module StrategyBuilder
       parallel_instrument_max: nil
     )
       @client = client
-      @registry = registry
       @max_steps = max_steps || StrategyBuilder.configuration.max_agent_iterations
       @logger = StrategyBuilder.logger
       @memory = []
@@ -105,33 +103,6 @@ module StrategyBuilder
         final_result: nil,
         strategies_found: catalog.size,
         passing_strategies: catalog.passing.size
-      }
-    end
-
-    # Optional: LLM tool-calling loop against CoinDCX + catalog tools (proposal/orchestration only).
-    # Does not merge results into the deterministic pipeline; use for interactive research.
-    def run_with_llm_tools(query:)
-      @logger.info { "Agent LLM tool loop: #{query}" }
-      executor = build_executor
-      raise StrategyBuilder::Error, "Ollama::Agent::Executor not available" if executor.nil?
-
-      steps = []
-      result = executor.run(system: AGENT_SYSTEM_PROMPT, user: build_initial_prompt(query))
-      steps << { type: :executor_result, content: result }
-      catalog = @catalog_factory.call
-      {
-        steps: steps,
-        final_result: result,
-        strategies_found: catalog.size,
-        passing_strategies: catalog.passing.size
-      }
-    rescue Ollama::Error => e
-      @logger.error { "Executor error: #{e.message}" }
-      {
-        steps: [{ type: :error, content: e.message }],
-        final_result: nil,
-        strategies_found: 0,
-        passing_strategies: 0
       }
     end
 
@@ -259,40 +230,12 @@ module StrategyBuilder
     private
 
     def proposal_dedupe_key(candidate)
-      base_name = candidate[:name].to_s.sub(/\s*\(offline template\)\s*\z/i, "").strip.downcase
+      base_name = candidate[:name].to_s.sub(/\s*\((?:offline|mutated) template\)\s*\z/i, "").strip.downcase
       family = candidate[:family].to_s.downcase
       "#{family}:#{base_name}"
     end
 
-    def build_executor
-      tools = {}
-      @registry.all.each do |tool|
-        tools[tool.name] = tool.callable
-      end
-
-      Ollama::Agent::Executor.new(@client, tools: tools)
-    rescue NameError => e
-      @logger.warn { "Ollama::Agent::Executor not available: #{e.message}" }
-      nil
-    end
-
-    def build_initial_prompt(query)
-      <<~PROMPT
-        Research task: #{query}
-
-        Available instruments: #{StrategyBuilder.configuration.default_instruments.join(', ')}
-        Available timeframes: #{StrategyBuilder.configuration.default_timeframes.join(', ')}
-
-        Please:
-        1. First list available instruments to confirm what's tradeable.
-        2. Fetch MTF candles for the top 2-3 instruments.
-        3. Compute features for each.
-        4. Generate strategy candidates based on observed patterns.
-        5. Report what you found and which strategies look promising.
-      PROMPT
-    end
-
-    # Fallback: run the pipeline without the Executor tool loop.
+    # Pipeline execution without LLM tool loops.
     def run_manual_pipeline(_query)
       steps = []
 

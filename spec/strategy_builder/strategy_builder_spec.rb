@@ -167,7 +167,11 @@ RSpec.describe StrategyBuilder do
     end
 
     it "logs once when OLLAMA_BASE_URL points at ollama.com" do
-      StrategyBuilder.configure { |c| c.ollama_base_url = "https://ollama.com" }
+      ENV.delete("OLLAMA_API_KEY")
+      StrategyBuilder.configure do |c|
+        c.ollama_base_url = "https://ollama.com"
+        c.ollama_api_key = nil
+      end
       expect(StrategyBuilder.logger).to receive(:warn).once
       StrategyBuilder.warn_if_ollama_base_url_is_public_website
       StrategyBuilder.warn_if_ollama_base_url_is_public_website

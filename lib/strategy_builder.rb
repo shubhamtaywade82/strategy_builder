@@ -71,10 +71,8 @@ module StrategyBuilder
     autoload :ParallelInstrumentRunner, "strategy_builder/agent/parallel_instrument_runner"
     autoload :DiscoverPhase, "strategy_builder/agent/discover_phase"
     autoload :ValidatePhase, "strategy_builder/agent/validate_phase"
-    autoload :ToolServices, "strategy_builder/agent/tool_services"
   end
   autoload :AgentLoop,          "strategy_builder/agent/agent_loop"
-  autoload :ToolRegistry,       "strategy_builder/agent/tool_registry"
 
   # Signal generation (bridges strategy conditions to backtest signals)
   autoload :EvaluationContext,  "strategy_builder/backtest/evaluation_context"
